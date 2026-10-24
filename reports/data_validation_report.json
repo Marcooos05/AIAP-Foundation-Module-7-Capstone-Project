@@ -1,0 +1,38 @@
+{
+  "n_rows": 1000,
+  "n_columns": 8,
+  "missing_values_per_column": {},
+  "n_duplicate_rows": 0,
+  "unexpected_categorical_levels": {},
+  "n_outside_plausible_range": {
+    "age": {
+      "below": 3,
+      "above": 3
+    },
+    "bmi": {
+      "below": 1,
+      "above": 0
+    },
+    "blood_pressure": {
+      "below": 0,
+      "above": 0
+    },
+    "fasting_glucose_level": {
+      "below": 0,
+      "above": 0
+    },
+    "cholesterol_level": {
+      "below": 0,
+      "above": 0
+    },
+    "physical_activity_frequency": {
+      "below": 0,
+      "above": 0
+    }
+  },
+  "n_below_min_age": 3,
+  "target_distribution": {
+    "Negative": 850,
+    "Positive": 150
+  }
+}

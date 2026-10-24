@@ -1,0 +1,66 @@
+{
+  "n_rows_raw": 1000,
+  "n_rows_cleaned": 997,
+  "splits": {
+    "train": {
+      "n_rows": 797,
+      "n_positive": 118,
+      "positive_share": 0.1481
+    },
+    "test": {
+      "n_rows": 200,
+      "n_positive": 30,
+      "positive_share": 0.15
+    }
+  },
+  "feature_variants": {
+    "with_glucose__trees": {
+      "n_features": 7,
+      "features": [
+        "age",
+        "bmi",
+        "blood_pressure",
+        "fasting_glucose_level",
+        "cholesterol_level",
+        "physical_activity_frequency",
+        "family_history_of_diabetes_Present"
+      ]
+    },
+    "with_glucose__logistic_regression": {
+      "n_features": 8,
+      "features": [
+        "age",
+        "bmi",
+        "blood_pressure",
+        "fasting_glucose_level",
+        "cholesterol_level",
+        "sqrt_physical_activity",
+        "family_history_x_bmi",
+        "family_history_of_diabetes_Present"
+      ]
+    },
+    "without_glucose__trees": {
+      "n_features": 6,
+      "features": [
+        "age",
+        "bmi",
+        "blood_pressure",
+        "cholesterol_level",
+        "physical_activity_frequency",
+        "family_history_of_diabetes_Present"
+      ]
+    },
+    "without_glucose__logistic_regression": {
+      "n_features": 7,
+      "features": [
+        "age",
+        "bmi",
+        "blood_pressure",
+        "cholesterol_level",
+        "sqrt_physical_activity",
+        "family_history_x_bmi",
+        "family_history_of_diabetes_Present"
+      ]
+    }
+  }
+}

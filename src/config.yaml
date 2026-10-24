@@ -1,0 +1,37 @@
+file_path: "./data/synthetic_data_166.csv"
+target_column: "diabetes_diagnosis"
+positive_class: "Positive"       # diabetes = Positive is the positive class (compared as strings)
+min_age: 18                      # rows below this age are dropped: adult screening population (EDA §15)
+test_size: 0.2                   # stratified 80/20 train/test; no separate validation set (EDA §17)
+random_state: 42
+cv: 5                            # stratified k-fold on the training set, used by modelling (EDA §17)
+numeric_features:
+  - age
+  - bmi
+  - blood_pressure
+  - fasting_glucose_level
+  - cholesterol_level
+  - physical_activity_frequency
+binary_features:
+  - family_history_of_diabetes
+# Expected levels of every text column; any other value raises during cleaning (EDA §3.3).
+categorical_levels:
+  family_history_of_diabetes: [Absent, Present]
+  diabetes_diagnosis: [Negative, Positive]
+# Dropped in the "without_glucose" feature variant: glucose is part of how diabetes is
+# diagnosed, so every model is also trained without it (README §5.7, EDA §13).
+leakage_candidate_features: [fasting_glucose_level]
+# Logistic Regression variant only (EDA §16, §17.1, §20):
+#   swap the right-skewed activity feature for its square root, and add the interaction.
+lr_feature_swaps:
+  physical_activity_frequency: sqrt_physical_activity
+lr_extra_features: [family_history_x_bmi]
+# Clinically plausible ranges, used only to count suspicious values in the
+# validation report; nothing is dropped because of them (EDA §3.4).
+plausible_ranges:
+  age: [18, 100]
+  bmi: [12, 70]
+  blood_pressure: [70, 220]
+  fasting_glucose_level: [50, 400]
+  cholesterol_level: [80, 400]
+  physical_activity_frequency: [0, 1]

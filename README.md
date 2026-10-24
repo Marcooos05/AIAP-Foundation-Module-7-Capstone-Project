@@ -228,6 +228,26 @@ Kept to a small number given the sample size (#8):
 
 ## Structure
 
+```
+AIAP_Mod7_Capstone-Project/
+├── data/
+│   └── synthetic_data_166.csv      # raw dataset (not committed, see .gitignore)
+├── src/
+│   ├── config.yaml                 # all pipeline settings (paths, split, features, levels)
+│   ├── config_validation.py        # validates config.yaml before the pipeline runs
+│   └── data_preparation.py         # DataPreparation: validation report, cleaning, feature engineering,
+│                                   #   stratified split, preprocessor (scaling + encoding)
+├── tests/                          # pytest suite (config validation, data preparation)
+├── reports/
+│   ├── figures/                    # EDA plots
+│   ├── data_validation_report.json # written by main.py
+│   └── data_preparation_summary.json
+├── EDA.ipynb                       # exploratory analysis and data preparation rationale
+├── main.py                         # pipeline entry point
+├── requirements.txt / requirements-dev.txt
+└── pytest.ini
+```
+
 ## Setup
 
 ### Requirements
@@ -256,6 +276,34 @@ source venv/bin/activate  # Linux/macOS
 pip install -r requirements.txt
 ```
 
+Run the tests with `pip install -r requirements-dev.txt` and then `python -m pytest`.
+
 ## Pipeline (`python main.py`)
+
+Run from the project root. All settings live in [src/config.yaml](src/config.yaml), which is validated before anything runs.
+
+**Stage 1: data preparation** (implemented)
+
+| Step | What happens | Output |
+|---|---|---|
+| 1. Load config | Read and validate `src/config.yaml` | |
+| 2. Load data | Read the CSV and check the required columns | |
+| 3. Validation report | Count missing values, duplicates, unexpected category levels, values outside plausible ranges, rows below `min_age`, and the target distribution, on the raw data | `reports/data_validation_report.json` |
+| 4. Clean & engineer | Drop duplicates and missing targets, strip and check category levels, drop rows with age < 18, add `sqrt_physical_activity` and `family_history_x_bmi` | 1000 → 997 rows |
+| 5. Split | Stratified 80/20 train/test (`random_state=42`) | train 797 (14.8% Positive), test 200 (15.0%) |
+| 6. Preprocessor check | Fit `StandardScaler` + `OneHotEncoder(drop="if_binary")` on train for each feature variant, transform both sets, check for NaNs | `reports/data_preparation_summary.json` |
+
+**Feature variants** (`DataPreparation.feature_variants()`):
+
+| Variant | Features |
+|---|---|
+| `with_glucose__trees` | 6 raw numeric + family history (7) |
+| `with_glucose__logistic_regression` | activity → sqrt, + family history × BMI (8) |
+| `without_glucose__trees` | the same as trees, minus `fasting_glucose_level` (6) |
+| `without_glucose__logistic_regression` | the same as LR, minus `fasting_glucose_level` (7) |
+
+The preprocessor is always fitted on training data only. In the modelling stage it sits inside a scikit-learn `Pipeline`, so cross-validation refits it on every fold.
+
+**Stage 2: model training & evaluation** (next): Logistic Regression baseline → Decision Tree → Random Forest → Gradient Boosting, with stratified 5-fold CV, `class_weight="balanced"` and threshold tuning for recall (see §5 of the literature review).
 
 ## Results and discussion
