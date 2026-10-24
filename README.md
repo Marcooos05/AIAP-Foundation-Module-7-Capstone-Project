@@ -29,7 +29,7 @@ Units are not documented. The ones below are inferred from the value ranges and 
 ### Initial observations (univariate EDA)
 
 - **Data quality:** there are no missing values, blank strings, duplicate rows or inconsistent category labels, so no structural cleaning is needed.
-- **Implausible values:** 7 rows fall outside adult clinical ranges: ages 12, 16, 17, 101, 104 and 106, and a BMI of 11.8. These are flagged and will be handled in preprocessing.
+- **Implausible values:** 7 rows fall outside adult clinical ranges: ages 12, 16, 17, 101, 104 and 106, and a BMI of 11.8. In data preparation, the **3 minors (ages 12, 16, 17) are dropped** as outside the adult screening population. The ages above 100 and the BMI of 11.8 are kept (see Data preparation below).
 - **Distributions:** five numeric features are approximately normal (|skew| < 0.15, Shapiro–Wilk p > 0.05). `physical_activity_frequency` is the exception: it is right-skewed (skew 0.57).
 - **Outliers:** 34 rows (3.4%) contain at least one IQR outlier, and 15 are confirmed by the z-score rule. Most are clinically plausible extremes. 35% of outlier rows are Positive (vs 15% overall), so they are kept.
 - **Feature–target direction (preliminary):** apart from family history, the class means go **against** clinical expectations:
@@ -44,11 +44,47 @@ Units are not documented. The ones below are inferred from the value ranges and 
   | physical_activity_frequency | 0.26 | 0.38 | Positive lower |
   | family history Present → % Positive | | 24.8% (vs 8.5% Absent) | ✓ as expected |
 
-  The label definition and encoding must be confirmed in the bivariate EDA before modelling.
+  The bivariate analysis below examines this further.
+
+### Bivariate & correlation findings
+
+Full analysis: [EDA.ipynb](EDA.ipynb), Part 2 (§8–14).
+
+| Rank | Feature | AUC alone | Corr. with Positive | Effect size | Matches clinical? |
+|---|---|---|---|---|---|
+| 1 | fasting_glucose_level | 0.90 | −0.51 | d = −1.65 (large) | ✗ |
+| 2 | bmi | 0.78 | −0.34 | d = −1.02 (large) | ✗ |
+| 3 | blood_pressure | 0.72 | −0.26 | d = −0.77 (medium) | ✗ |
+| 4 | age | 0.71 | −0.27 | d = −0.80 (medium) | ✗ |
+| 5 | physical_activity_frequency | 0.71 | +0.26 | d = +0.76 (medium) | ✗ |
+| 6 | family_history | 0.65 | +0.22 | OR = 3.54 (95% CI 2.46–5.10) | ✓ |
+| 7 | cholesterol_level | 0.61 | −0.13 | d = −0.36 (small) | ✗ |
+
+*AUC alone* is the ROC-AUC of each feature used as the only predictor, taken in whichever direction works better. Correlation is point-biserial (Pearson against Positive = 1).
+
+- **Strong signal:** every feature differs significantly between the classes (p < 1e-4), and five have a single-feature AUC above 0.7. Even a simple model should perform well.
+- **No multicollinearity:** no feature pair has |r| > 0.7 and every VIF is below 2. Pearson ≈ Spearman, so the relationships are monotonic and near-linear. All 7 features can be kept.
+- **Glucose dominates, but it isn't classic leakage.** One cut-off (≤ 94 mg/dL) gives sensitivity 0.81 and specificity 0.85, but the classes still overlap. The label was clearly *not* derived from the ADA ≥ 126 rule, since none of those 86 rows are Positive.
+- **Reversed risk gradients:** binned positive rates fall steadily as glucose, BMI, age and blood pressure rise (e.g. BMI < 18.5 → 54% Positive, BMI ≥ 30 → 4%). A FINDRISC-style risk-factor count is perfectly inverted, falling from 50% Positive with 0 factors to 0% with all 6.
+- **The anomaly lies in the label, not the features.** The features correlate with each other in clinically sensible ways (BMI with glucose, r = 0.54, and with BP, r = 0.51), but 6 of 7 relate to the label in the reverse direction. Simply swapping the labels doesn't explain it: family history would become protective and prevalence would jump to 85%. A synthetic generator with non-clinical rules is the most likely cause.
+- **Decision:** model the label **as given**, report the anomaly as a limitation (TRIPOD+AI requires the outcome definition), and **raise it with the data provider or instructor**.
+
+### Data preparation
+
+Explored and justified in [EDA.ipynb](EDA.ipynb), Part 3 (§15–21), to be ported into the `src/` pipeline.
+
+| Step | Decision | Leakage safety |
+|---|---|---|
+| **Cleaning** | Drop the 3 rows with age < 18 (2 Positive, 1 Negative), giving **997 rows, 148 Positive (14.8%)**. Keep ages > 100, BMI 11.8 and all statistical outliers (35% of outlier rows are Positive) | Fixed rule, applied before the split |
+| **Feature engineering** | `sqrt_physical_activity` (skew 0.57 → −0.06) and `family_history_x_bmi`, for Logistic Regression only. Kept only if CV shows a gain: on the training set the interaction is weak alone (AUC 0.59). Clinical bins are for interpretability only | Row-wise, applied before the split |
+| **Splitting** | Stratified 80/20 train/test (`random_state=42`): train 797 (118 Positive), test 200 (30 Positive). No separate validation set; stratified 5-fold CV on train (23–24 positives per fold). The test set is used once | |
+| **Encoding** | `family_history_of_diabetes` → `OneHotEncoder(drop="if_binary")` (one 0/1 column). Target: Positive = 1 | Inside the pipeline |
+| **Scaling** | `StandardScaler` on numeric features, since they are near-normal with few outliers (so `RobustScaler` isn't needed) | Fitted on each training fold only, inside the pipeline |
+| **Feature sets** | `with_glucose` (7 features for trees, 8 for LR) and `without_glucose` (6 / 7) | |
 
 ## Literature Review
 
-> **Status:** first draft, written after the literature review and the univariate EDA ([EDA.ipynb](EDA.ipynb)). Decisions marked *(to confirm)* depend on the bivariate EDA.
+> **Status:** first draft, written after the literature review and updated after the univariate and bivariate EDA ([EDA.ipynb](EDA.ipynb)). The open question is the label definition (see Dataset Overview).
 
 ### 1. Problem statement and rationale
 
@@ -145,21 +181,24 @@ We follow the **TRIPOD+AI** checklist (#10): data source, outcome definition, pr
 - **Plan:**
   1. Train every model **with** and **without** `fasting_glucose_level` and compare.
   2. In the bivariate EDA, check how strongly glucose separates the classes. A near-deterministic relationship (e.g. almost every case above a cut-off belongs to one class) counts as **leakage**, and glucose is then **excluded** from the final model.
-- **Note from the univariate EDA:** in this dataset positives have *lower* mean glucose than negatives (≈86 vs ≈108 mg/dL), and none of the 86 rows with glucose ≥ 126 is labelled Positive. That is the opposite of the clinical expectation. Other features (BMI, blood pressure, age, activity) also run against the expected direction; only family history behaves as expected. We will check the label definition/encoding before drawing conclusions about leakage. *(to confirm)*
+- **Bivariate EDA result:**
+  - Glucose is the dominant predictor (AUC 0.90 alone) but is **not near-deterministic**. At the best single cut-off (≤ 94 mg/dL), sensitivity is 0.81 and specificity 0.85, so the classes still overlap.
+  - The label was **not** derived from the diagnostic rule: none of the 86 rows with glucose ≥ 126 are Positive. Its relationship to the label is actually *reversed* (Positive mean ≈ 86 vs Negative ≈ 108 mg/dL), as it is for 5 other features (see Dataset Overview).
+  - **Verdict: glucose is not classified as leakage. Keep it,** but still train every model with and without it, to report how well the non-laboratory features alone perform (more relevant for early screening).
+  - The verdict will be revisited if the data provider's label definition shows that glucose was used to construct the label.
 
-#### 5.8 Feature engineering *(to confirm after bivariate EDA)*
+#### 5.8 Feature engineering *(updated after bivariate EDA)*
 
-Candidates, kept to a small number given the sample size (#8):
+Kept to a small number given the sample size (#8):
 
-- **BMI category** (WHO: underweight < 18.5, normal 18.5–24.9, overweight 25–29.9, obese ≥ 30)
-- **Blood-pressure category** (normal / elevated / hypertension stages)
-- **Age bands** (e.g. < 45, 45–64, ≥ 65; ADA recommends screening from age 35)
-- **Square-root transform of `physical_activity_frequency`**, which is right-skewed (skew 0.57)
-- **Interactions**, e.g. BMI × physical activity
-- **Glucose band** (normal / prediabetes / diabetes), only if glucose is kept (§5.7)
-- Binary encoding of `family_history_of_diabetes` (Present = 1)
-
-Tree-based models find thresholds on their own, so binned features matter mainly for interpretability and for the LR baseline.
+| Candidate | Decision | Reason |
+|---|---|---|
+| Raw continuous features | **Keep** | Monotonic, near-linear relationships (Pearson ≈ Spearman); low VIF |
+| Binary encoding of `family_history_of_diabetes` (Present = 1) | **Keep** | Strong, clinically consistent (OR 3.54) |
+| Square-root transform of `physical_activity_frequency` | **Try** (LR only) | Right-skewed (skew 0.57); trees are unaffected |
+| `family_history × bmi` interaction | **Try** (LR only) | The family-history effect varies across BMI bands, but cells are small |
+| BMI category (WHO), BP category, age bands, glucose band | **Interpretability only** | Relationships are monotonic without thresholds, so there is little predictive gain over raw values |
+| Clinical risk-factor count (FINDRISC-style) | **Drop** | Perfectly inverted on this data (50% → 0% Positive), so it would mislead |
 
 ### 6. Pitfalls identified in the literature
 
@@ -190,6 +229,32 @@ Tree-based models find thresholds on their own, so binned features matter mainly
 ## Structure
 
 ## Setup
+
+### Requirements
+
+Python 3.10+ with the following packages (see `requirements.txt`):
+
+| Package | Version | Purpose |
+|---|---|---|
+| pandas | 3.0.3 | Data manipulation and analysis |
+| numpy | 2.4.6 | Numerical computing |
+| scikit-learn | 1.8.0 | Machine learning models and evaluation |
+| scipy | 1.17.1 | Statistical tests (Shapiro–Wilk, chi-squared, etc.) |
+| matplotlib | 3.10.9 | Visualisation |
+| PyYAML | 6.0.3 | Configuration file parsing |
+| joblib | 1.5.3 | Model serialisation |
+
+### Installation
+
+```bash
+# Create and activate a virtual environment (recommended)
+python -m venv venv
+source venv/bin/activate  # Linux/macOS
+# or: venv\Scripts\activate  # Windows
+
+# Install dependencies
+pip install -r requirements.txt
+```
 
 ## Pipeline (`python main.py`)
 
