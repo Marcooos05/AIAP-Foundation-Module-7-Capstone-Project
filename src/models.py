@@ -313,5 +313,5 @@ class ModelTraining:
 
     @staticmethod
     def used_feature_names(pipeline: Pipeline) -> List[str]:
-        """Feature names after preprocessing, as the classifier sees them."""
-        return list(pipeline.named_steps['preprocessor'].get_feature_names_out())
+        """Feature names after every step before the classifier, as the classifier sees them."""
+        return list(pipeline[:-1].get_feature_names_out())

@@ -18,6 +18,8 @@ REQUIRED_KEYS = {
     "target_recall": float,
     "n_jobs": int,
     "param_grids": dict,
+    "search_spaces": dict,
+    "optimization": dict,
     "numeric_features": list,
     "binary_features": list,
     "categorical_levels": dict,
@@ -40,6 +42,8 @@ SUPPORTED_SCORING = ("average_precision", "roc_auc")
 # Models tuned by src.models.ModelTraining (baseline) and src.advanced_models.AdvancedModelTraining;
 # each needs a grid.
 MODEL_NAMES = ("logistic_regression", "random_forest", "gradient_boosting")
+
+OPTIMIZATION_COUNT_KEYS = ("cv_repeats", "n_iter", "nested_n_iter", "learning_curve_points")
 
 
 def validate_config(config: Dict[str, Any]) -> None:
@@ -92,16 +96,28 @@ def validate_config(config: Dict[str, Any]) -> None:
     if config["n_jobs"] == 0 or config["n_jobs"] < -1:
         raise ValueError(f"Config key 'n_jobs' must be -1 (all cores) or >= 1, got {config['n_jobs']}.")
 
-    missing_grids = [name for name in MODEL_NAMES if name not in config["param_grids"]]
-    if missing_grids:
-        raise ValueError(f"Config 'param_grids' is missing an entry for model(s): {missing_grids}.")
-    for model_name, grid in config["param_grids"].items():
-        if model_name not in MODEL_NAMES:
-            raise ValueError(f"Unknown model '{model_name}' in 'param_grids'; expected one of {list(MODEL_NAMES)}.")
-        if not isinstance(grid, dict) or not all(isinstance(v, list) and v for v in grid.values()):
-            raise ValueError(
-                f"Config key 'param_grids.{model_name}' must be a dict of non-empty hyperparameter lists."
-            )
+    for key in ("param_grids", "search_spaces"):
+        missing_grids = [name for name in MODEL_NAMES if name not in config[key]]
+        if missing_grids:
+            raise ValueError(f"Config '{key}' is missing an entry for model(s): {missing_grids}.")
+        for model_name, grid in config[key].items():
+            if model_name not in MODEL_NAMES:
+                raise ValueError(f"Unknown model '{model_name}' in '{key}'; expected one of {list(MODEL_NAMES)}.")
+            if not isinstance(grid, dict) or not all(isinstance(v, list) and v for v in grid.values()):
+                raise ValueError(
+                    f"Config key '{key}.{model_name}' must be a dict of non-empty hyperparameter lists."
+                )
+
+    optimization = config["optimization"]
+    for key in OPTIMIZATION_COUNT_KEYS:
+        value = optimization.get(key)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+            raise ValueError(f"Config key 'optimization.{key}' must be an integer >= 1, got {value!r}.")
+    if optimization["learning_curve_points"] < 2:
+        raise ValueError("Config key 'optimization.learning_curve_points' must be >= 2.")
+    max_fit_gap = optimization.get("max_fit_gap")
+    if not isinstance(max_fit_gap, (int, float)) or isinstance(max_fit_gap, bool) or max_fit_gap <= 0:
+        raise ValueError(f"Config key 'optimization.max_fit_gap' must be > 0, got {max_fit_gap!r}.")
 
     for key in (*FEATURE_ROLE_KEYS, "leakage_candidate_features", "lr_engineered_features", "candidate_features"):
         if not all(isinstance(item, str) for item in config[key]):

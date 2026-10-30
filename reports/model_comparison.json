@@ -1,7 +1,7 @@
 {
   "with_glucose": {
     "baseline": "logistic_regression__with_glucose",
-    "selected": "gradient_boosting__with_glucose",
+    "best_cv": "gradient_boosting__with_glucose",
     "models": {
       "logistic_regression__with_glucose": {
         "architecture": "linear (baseline, src/models.py)",
@@ -64,8 +64,8 @@
             "upper": 0.8718867918266316
           }
         },
-        "mean_fit_time_s": 0.06580963134765624,
-        "predict_time_ms": 2.8180930003145477
+        "mean_fit_time_s": 0.05924744606018066,
+        "predict_time_ms": 2.9311430007510353
       },
       "random_forest__with_glucose": {
         "architecture": "bagged decision trees (src/advanced_models.py)",
@@ -134,8 +134,8 @@
             "upper": 0.8692011302605814
           }
         },
-        "mean_fit_time_s": 1.0603596687316894,
-        "predict_time_ms": 20.752163998622564
+        "mean_fit_time_s": 0.9365790367126465,
+        "predict_time_ms": 20.160664000286488
       },
       "gradient_boosting__with_glucose": {
         "architecture": "boosted decision trees (src/advanced_models.py)",
@@ -204,14 +204,14 @@
             "upper": 0.8682477504926457
           }
         },
-        "mean_fit_time_s": 0.11480574607849121,
-        "predict_time_ms": 4.110422001758707
+        "mean_fit_time_s": 0.09741106033325195,
+        "predict_time_ms": 4.618598000888596
       }
     }
   },
   "without_glucose": {
     "baseline": "logistic_regression__without_glucose",
-    "selected": "logistic_regression__without_glucose",
+    "best_cv": "logistic_regression__without_glucose",
     "models": {
       "logistic_regression__without_glucose": {
         "architecture": "linear (baseline, src/models.py)",
@@ -274,8 +274,8 @@
             "upper": 0.7665420038081326
           }
         },
-        "mean_fit_time_s": 0.023981904983520506,
-        "predict_time_ms": 3.0611559996032156
+        "mean_fit_time_s": 0.019329166412353514,
+        "predict_time_ms": 2.968373999465257
       },
       "random_forest__without_glucose": {
         "architecture": "bagged decision trees (src/advanced_models.py)",
@@ -344,8 +344,8 @@
             "upper": 0.6632055652255145
           }
         },
-        "mean_fit_time_s": 1.071204948425293,
-        "predict_time_ms": 20.46735499970964
+        "mean_fit_time_s": 0.923099946975708,
+        "predict_time_ms": 26.735994000773644
       },
       "gradient_boosting__without_glucose": {
         "architecture": "boosted decision trees (src/advanced_models.py)",
@@ -414,8 +414,8 @@
             "upper": 0.6429655630448015
           }
         },
-        "mean_fit_time_s": 0.11101336479187011,
-        "predict_time_ms": 4.418554999574553
+        "mean_fit_time_s": 0.12345905303955078,
+        "predict_time_ms": 5.401888000051258
       }
     }
   }

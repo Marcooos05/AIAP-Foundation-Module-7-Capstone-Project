@@ -238,6 +238,8 @@ AIAP_Mod7_Capstone-Project/
 │   │                               #   shared machinery: GridSearchCV tuning, selection, threshold, test
 │   ├── advanced_models.py          # AdvancedModelTraining: Random Forest (bagging) and Gradient Boosting
 │   │                               #   (boosting); compare_to_baseline (paired CV fold differences)
+│   ├── model_optimization.py       # ModelOptimizer: repeated and nested CV, random search with a 1-SE
+│   │                               #   refit, over/underfitting diagnostics, final model selection
 │   ├── evaluation.py               # metrics (recall, F2, PR-AUC, Brier...), bootstrap CIs, plots
 │   ├── feature_engineering.py      # ClinicalFeatureEngineer (sklearn transformer), feature selection
 │   │                               #   (L1, permutation importance) and CV feature-set comparison
@@ -254,7 +256,8 @@ AIAP_Mod7_Capstone-Project/
 │   ├── feature_comparison.json     # CV scores per feature set and the recommended features
 │   ├── cv_results.json             # CV scores (per fold) of the baselines and tuned models
 │   ├── model_comparison.json       # baseline vs advanced: paired CV gains, test metrics with 95% CIs, cost
-│   ├── selected_models.json        # best model per glucose variant, hyperparameters, threshold
+│   ├── optimization_results.json   # searches, before/after fit diagnosis, nested CV, learning curves
+│   ├── selected_models.json        # final model per glucose variant, hyperparameters, threshold
 │   ├── final_metrics.json          # test-set metrics of the selected models and the dummy
 │   └── feature_importance.json     # permutation importance of the selected models
 ├── models/                         # saved best pipelines (*.joblib, not committed)
@@ -298,7 +301,9 @@ Run the tests with `pip install -r requirements-dev.txt` and then `python -m pyt
 
 Run from the project root. All settings live in [src/config.yaml](src/config.yaml), which is validated before anything runs.
 
-**Stage 1: data preparation and feature engineering** (implemented, ~45 s)
+`python main.py` takes about 4 minutes on 16 cores, most of it in Stage 3.
+
+**Stage 1: data preparation and feature engineering**
 
 | Step | What happens | Output |
 |---|---|---|
@@ -371,9 +376,21 @@ All three use `class_weight="balanced"`, the same stratified folds, the same tun
 | 11. Paired comparison | Each advanced model vs the baseline, fold by fold on the same folds (mean difference, folds improved, paired t-test) | `reports/model_comparison.json` |
 | 12. Threshold | For every model: highest threshold keeping **out-of-fold recall ≥ 0.90** on the training set, so the test set stays untouched | `reports/model_comparison.json` |
 | 13. Test evaluation | Every model evaluated **once** on the test set at its tuned threshold, with **95% stratified bootstrap CIs** (1,000 resamples); predict time recorded | `reports/model_comparison.json`, `figures/{roc,pr,calibration}_curve_test__{variant}.png` |
-| 14. Selection | Best CV PR-AUC within each glucose variant (test results are reported, never used to choose) | `reports/selected_models.json`, `reports/final_metrics.json`, confusion-matrix figures |
-| 15. Explanation | Permutation importance (drop in PR-AUC) of the selected models on the test set | `reports/feature_importance.json` |
-| 16. Save | Selected pipelines (feature engineering + preprocessor + model) | `models/best_pipeline__{variant}.joblib` |
+
+**Stage 3: model optimization and final selection** ([src/model_optimization.py](src/model_optimization.py))
+
+Stage 2 uses small grids and one 5-fold split. Stage 3 revisits all three models to reduce noise and overfitting, and makes the final choice.
+
+| Step | What happens | Output |
+|---|---|---|
+| 14. Random search | `RandomizedSearchCV` (30 seeded candidates) over wider, regularisation-focused spaces (`search_spaces` in config), on `RepeatedStratifiedKFold` (5 folds × 3 repeats). Logistic Regression can also try L1 and a degree-2 polynomial step, to test for underfitting | `reports/optimization_results.json` |
+| 15. One-SE refit | Among candidates within 1 SE of the best validation score, keep the smallest train−validation gap | `reports/optimization_results.json` |
+| 16. Fit diagnostics | Before/after scores on the same repeated folds, labelled `overfit` (gap > 0.10), `underfit` or `good_fit`; learning curves | `figures/learning_curves__{variant}.png` |
+| 17. Nested CV | Outer 5-fold around an inner search: an estimate free of tuning optimism | `reports/optimization_results.json` |
+| 18. Final selection | Simplest model within 1 SE of the best repeated-CV mean (LR < Gradient Boosting < Random Forest). Training data only | `reports/selected_models.json` |
+| 19. Final test | Only the selected models, at their out-of-fold threshold, with 95% bootstrap CIs and next to the dummy | `reports/final_metrics.json`, confusion-matrix figures |
+| 20. Explanation | Permutation importance (drop in PR-AUC) of the selected models on the test set | `reports/feature_importance.json` |
+| 21. Save | Selected pipelines (feature engineering + preprocessor + model) | `models/best_pipeline__{variant}.joblib` |
 
 ## Results and discussion
 
@@ -390,7 +407,7 @@ All three use `class_weight="balanced"`, the same stratified folds, the same tun
 | **Gradient Boosting** (advanced) | **0.693 ± 0.047** | 0.480 ± 0.078 |
 
 - Every model beats the dummy by a wide margin, which confirms the signal found in the EDA.
-- With glucose, Gradient Boosting and LR both reach 0.693, and Gradient Boosting is selected by a margin below 0.001. Without glucose, LR is best. The comparison below tests whether any of these differences is real.
+- With glucose, Gradient Boosting and LR both reach 0.693, with Gradient Boosting ahead by a margin below 0.001. Without glucose, LR is best. The comparison below tests whether any of these differences is real.
 
 ### Baseline vs advanced models
 
@@ -403,7 +420,7 @@ All three use `class_weight="balanced"`, the same stratified folds, the same tun
 
 The p-values are from a paired t-test on the fold scores. They are indicative only, because CV folds share training data (Dietterich, 1998).
 
-**Test set, each model at its own tuned threshold** (95% bootstrap CI in brackets; ★ = selected by CV):
+**Test set, each model at its own tuned threshold** (95% bootstrap CI in brackets; ★ = best CV score at this stage, before optimization):
 
 | With glucose | LR (baseline) | Random Forest | Gradient Boosting ★ |
 |---|---|---|---|
@@ -436,33 +453,89 @@ The p-values are from a paired t-test on the fold scores. They are indicative on
 - **Calibration** is the one area where an advanced model stands out. Random Forest has the best Brier score with glucose (0.078 vs 0.104), because averaging many trees gives less extreme probabilities. It matters only if the scores are used as risks, not just to rank people (see Limitations).
 - **Cost and interpretability favour the baseline.** LR fits about 15× faster than Random Forest, predicts about 7× faster, and has coefficients a clinician can read.
 
-**Conclusion.** Neither advanced architecture beats the Logistic Regression baseline. The selection rule (highest mean CV PR-AUC) picks Gradient Boosting with glucose by a margin of 0.0003. For deployment, the simpler model is the better choice: **Logistic Regression in both settings**. A tie-break such as the one-standard-error rule would pick it automatically. The advanced models remain useful as evidence that the baseline is not leaving performance on the table.
+**Conclusion.** Neither advanced architecture beats the Logistic Regression baseline on the fixed grids. Gradient Boosting has the top score with glucose, but only by 0.0003. The next section re-tests this with less noise.
 
-### Selected models: test set (200 rows, 30 Positive), at the tuned threshold
+### Model optimization
 
-| | With glucose: Gradient Boosting | Without glucose: Logistic Regression | Dummy |
+All of this uses the training set only. Scores are PR-AUC on 5-fold CV repeated 3 times, so every model is compared on the same 15 splits.
+
+**Over/underfitting, before and after** (before = Stage 2 settings, after = random search with the one-SE refit):
+
+| Model | Variant | Train: before → after | Validation: before → after | Gap: before → after | Diagnosis: before → after |
+|---|---|---|---|---|---|
+| Logistic Regression | with glucose | 0.687 → 0.690 | 0.688 → **0.690** | −0.002 → −0.001 | good fit → good fit |
+| Gradient Boosting | with glucose | 0.787 → 0.683 | 0.690 → 0.656 | +0.097 → +0.027 | good fit → good fit |
+| Random Forest | with glucose | 0.924 → 0.699 | 0.665 → 0.676 | **+0.260 → +0.023** | **overfit → good fit** |
+| Logistic Regression | without glucose | 0.488 → 0.482 | 0.503 → **0.493** | −0.015 → −0.011 | good fit → good fit |
+| Gradient Boosting | without glucose | 0.719 → 0.503 | 0.463 → 0.449 | **+0.257 → +0.055** | **overfit → underfit** |
+| Random Forest | without glucose | 0.682 → 0.523 | 0.491 → 0.475 | **+0.191 → +0.048** | **overfit → good fit** |
+
+**Selected hyperparameters**
+
+| Model | With glucose | Without glucose |
+|---|---|---|
+| Logistic Regression | C = 1, L1 | C = 0.1, L2 |
+| Gradient Boosting | 100 trees, depth 1, learning rate 0.03, min leaf 10 | 50 trees, depth 1, learning rate 0.05, min leaf 10 |
+| Random Forest | depth 6, min leaf 40, all features | depth 2, min leaf 40, half of features |
+
+- **Overfitting is largely fixed.** All three overfitted cases are now under the 0.10 limit, and those gaps fell by 75–91%. The search chose much stronger regularisation: Random Forest's minimum leaf rose from 1–5 to 40, and Gradient Boosting dropped to single-split trees.
+- **Lower gaps did not bring higher scores.** Only Random Forest with glucose (+0.011) and Logistic Regression with glucose (+0.002) improved on validation, and both changes are well inside one SE (about 0.03). In the other cases the one-SE rule traded some validation score for a smaller gap. That went too far for Gradient Boosting without glucose, which is now labelled underfit, and with glucose it lost 0.034 (just inside its SE of 0.038). The best raw candidates scored higher (0.688 and 0.478), so the rule is conservative rather than free.
+- **Logistic Regression is not underfitting.** Its train and validation scores match, which could mean too little capacity. But a degree-2 polynomial scored *lower* at its best (0.692 vs 0.695 with glucose, 0.494 vs 0.503 without) while its training score rose, so the extra capacity only added variance.
+- **Several parameters remain at the edge of their search range,** such as Gradient Boosting's depth of 1 and Random Forest's minimum leaf of 40 (see `params_at_search_edge`). The refit rule favours small gaps, so it pushes towards these limits. A depth of 1 is already the minimum, so that one can't be widened.
+
+**Learning curves** (`figures/learning_curves__{variant}.png`):
+- **Logistic Regression:** train and validation have converged by about 500 rows. More data is unlikely to help this model, and that level looks like the limit of what these features can give it.
+- **Random Forest and Gradient Boosting:** validation is still rising or flat with a small gap. Neither shows a clear sign that it would overtake Logistic Regression.
+
+**Nested CV** (unbiased estimate of the whole tuning procedure, mean ± SD over 5 outer folds):
+
+| Model | With glucose | Without glucose |
+|---|---|---|
+| Logistic Regression | 0.679 ± 0.146 | 0.495 ± 0.069 |
+| Gradient Boosting | 0.662 ± 0.122 | 0.456 ± 0.062 |
+| Random Forest | 0.663 ± 0.126 | 0.470 ± 0.076 |
+
+Nested scores stay close to the repeated-CV scores above, so tuning optimism is small. The large SDs with glucose come mostly from one hard outer fold, where all three models score about 0.45, and the best fold reaches 0.84–0.89. On 118 positives, a single split can be misleading, which is why this sprint moved away from one.
+
+**Final selection.** Rule, fixed before these results were seen: the simplest model within 1 SE of the best repeated-CV mean.
+
+| Variant | Selected | Validation | Nested CV | Why |
+|---|---|---|---|---|
+| With glucose | **Logistic Regression** (C = 1, L1) | 0.690 | 0.679 | Highest score, and the simplest |
+| Without glucose | **Logistic Regression** (C = 0.1, L2) | 0.493 | 0.495 | Highest score, and the simplest |
+
+This replaces Gradient Boosting from Stage 2. The choice doesn't depend on the one-SE refit: Gradient Boosting's Stage 2 settings score 0.690 on these folds, a tie, and the simplicity order would still pick Logistic Regression.
+
+### Final models: test set (200 rows, 30 Positive), at the tuned threshold
+
+Only the selected models were evaluated here (95% bootstrap CI in brackets).
+
+| | With glucose: Logistic Regression | Without glucose: Logistic Regression | Dummy |
 |---|---|---|---|
-| Threshold (target recall 0.90) | 0.340 | 0.322 | — |
-| **Recall (sensitivity)** | **0.90** (27/30) | 0.87 (26/30) | 0.00 |
-| Specificity | 0.76 | 0.64 | 1.00 |
-| Precision | 0.40 | 0.30 | 0.00 |
-| F2 | 0.72 | 0.63 | 0.00 |
-| ROC-AUC | 0.937 | 0.848 | 0.50 |
-| PR-AUC | 0.737 | 0.612 | 0.15 |
-| Brier score | 0.098 | 0.159 | 0.15 |
-| False negatives / false positives | 3 / 41 | 4 / 62 | 30 / 0 |
+| Threshold (target recall 0.90) | 0.418 | 0.404 | — |
+| **Recall (sensitivity)** | **0.87** (26/30) [0.73–0.97] | **0.87** (26/30) [0.73–0.97] | 0.00 |
+| Specificity | 0.82 [0.76–0.88] | 0.68 [0.62–0.75] | 1.00 |
+| Precision | 0.46 [0.38–0.56] | 0.33 [0.27–0.39] | 0.00 |
+| F2 | 0.73 [0.64–0.82] | 0.65 [0.56–0.73] | 0.00 |
+| ROC-AUC | 0.944 [0.909–0.973] | 0.849 [0.780–0.915] | 0.50 |
+| PR-AUC | 0.759 [0.636–0.882] | 0.606 [0.470–0.763] | 0.15 |
+| Brier score | 0.100 | 0.167 | 0.15 |
+| False negatives / false positives | 4 / 31 | 4 / 54 | 30 / 0 |
 
-- **Threshold tuning works as intended.** For the glucose model, moving from 0.5 to 0.34 cut missed cases from 4 to 3 and raised recall from 0.87 to 0.90. The price was 21 extra false positives (20 → 41), which is acceptable for screening (README §5.1). Without glucose, the tuned threshold cut misses from 8 to 4.
-- **Glucose adds a lot.** Without it, ROC-AUC falls from 0.94 to 0.85 and the model needs 21 more false positives to reach similar recall. The non-laboratory model is still useful as a first-pass screen.
+- **Recall is 0.87 against a 0.90 target.** The threshold reached 0.907 on out-of-fold training predictions. The test result is one person short of the target (26 vs 27 of 30), and 0.90 is well inside the CI.
+- **The tuned threshold barely helped on test.** With glucose, moving from 0.5 to 0.418 caught no extra positives and added 8 false positives (23 → 31). Without glucose, it caught one more and added 10 (44 → 54). With only 30 positives, this sample can't show whether the tuned threshold is worth its extra false positives.
+- **Glucose adds a lot.** Without it, ROC-AUC falls from 0.94 to 0.85 and the same recall costs 23 more false positives. The non-laboratory model is still useful as a first-pass screen.
 - **Accuracy would have been misleading:** the dummy scores 0.85 accuracy while catching no one.
 
 ### Feature importance (permutation, drop in test PR-AUC)
 
-- **With glucose:** `fasting_glucose_level` dominates (0.44), followed by age (0.06) and family history (0.04). Blood pressure and cholesterol add nothing once glucose is known.
-- **Without glucose:** BMI (0.23), family history (0.10), age (0.10) and physical activity (0.05) carry the signal. Blood pressure and cholesterol add little.
+- **With glucose:** `fasting_glucose_level` dominates (0.43), followed by age (0.07) and family history (0.06). Blood pressure and cholesterol add almost nothing once glucose is known.
+- **Without glucose:** BMI (0.22), age (0.10), family history (0.08) and physical activity (0.06) carry the signal. Blood pressure and cholesterol add little.
 
 ### Limitations
 
 - **Label direction.** As found in the EDA, 6 of 7 features relate to the label in the *opposite* direction to clinical knowledge. The models learn the data as given, so their predictions must not be read as clinical risk until the label definition is confirmed.
 - **Calibration.** `class_weight="balanced"` inflates predicted probabilities (see `figures/calibration_curve_test__{variant}.png`), so scores rank people well but are not true risks. This is the trade-off noted in the literature (van den Goorbergh et al., 2022).
 - **Small test set.** 30 positives give wide confidence intervals; CV results are the more stable comparison.
+- **The test set is not fully fresh.** Stage 2 reports test results for all three models, so they were visible before the final selection rule was applied. Selection still used training-set CV only, and the rule and its model order were fixed in advance, but the final test numbers should not be read as a first look at unseen data.
+- **Tuning has limits here.** Optimization made the models less overfitted and the choice more defensible. It did not raise performance: 118 training positives and near-linear relationships limit what tuning can add.

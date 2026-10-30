@@ -22,6 +22,14 @@ def base_config():
             "random_forest": {"classifier__n_estimators": [20], "classifier__max_depth": [3]},
             "gradient_boosting": {"classifier__max_iter": [20], "classifier__max_depth": [2]},
         },
+        "search_spaces": {  # small on purpose, so tests stay fast
+            "logistic_regression": {"classifier__C": [0.1, 1.0], "poly__degree": [1, 2]},
+            "random_forest": {"classifier__n_estimators": [20], "classifier__max_depth": [2, 3]},
+            "gradient_boosting": {"classifier__max_iter": [20], "classifier__max_depth": [1, 2]},
+        },
+        "optimization": {
+            "cv_repeats": 2, "n_iter": 2, "nested_n_iter": 1, "max_fit_gap": 0.1, "learning_curve_points": 2,
+        },
         "numeric_features": [
             "age", "bmi", "blood_pressure", "fasting_glucose_level", "cholesterol_level",
             "physical_activity_frequency",

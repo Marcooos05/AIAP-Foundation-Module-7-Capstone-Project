@@ -273,6 +273,25 @@ def plot_calibration_curves(
     _save_figure(fig, path)
 
 
+def plot_learning_curves(
+    curves: Dict[str, Dict[str, List[float]]], metric: str, path: Path, title: str = "Learning curves",
+) -> None:
+    """One panel per model: train and validation score (±1 SD band) against the training set size."""
+    fig, axes = plt.subplots(1, len(curves), figsize=(4.5 * len(curves), 4), sharey=True, squeeze=False)
+    for ax, (name, curve) in zip(axes[0], curves.items()):
+        sizes = curve['train_sizes']
+        for side, color in (('train', 'tab:blue'), ('val', 'tab:orange')):
+            mean, std = np.array(curve[f'{side}_mean']), np.array(curve[f'{side}_std'])
+            ax.plot(sizes, mean, marker='o', color=color, label='Train' if side == 'train' else 'Validation')
+            ax.fill_between(sizes, mean - std, mean + std, color=color, alpha=0.15)
+        ax.set_title(name, fontsize=10)
+        ax.set_xlabel("Training rows")
+    axes[0][0].set_ylabel(metric)
+    axes[0][0].legend(loc='lower right', fontsize=8)
+    fig.suptitle(title)
+    _save_figure(fig, path)
+
+
 def _save_figure(fig: plt.Figure, path: Path) -> None:
     fig.tight_layout()
     fig.savefig(path, dpi=120)

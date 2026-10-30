@@ -26,6 +26,7 @@ from src.evaluation import (
     metrics_from_scores,
     plot_calibration_curves,
     plot_confusion_matrix,
+    plot_learning_curves,
     plot_model_comparison,
     plot_precision_recall_curves,
     plot_roc_curves,
@@ -36,6 +37,7 @@ from src.feature_engineering import (
     passes_retention_rule,
     permutation_ranking,
 )
+from src.model_optimization import ModelOptimizer
 from src.models import ModelTraining
 
 logging.basicConfig(
@@ -268,9 +270,9 @@ def _train_and_evaluate(
     X_test: pd.DataFrame,
     y_train: pd.Series,
     y_test: pd.Series,
-) -> None:
+) -> Dict[str, Pipeline]:
     """
-    Stage 2: baseline vs advanced models (README §5).
+    Stage 2: baseline vs advanced models on the fixed grids (README §5).
 
     1. Cross-validate the reference floor: a most-frequent dummy and an untuned
        Logistic Regression.
@@ -280,9 +282,11 @@ def _train_and_evaluate(
     3. Compare each advanced model with the baseline fold by fold.
     4. Per glucose variant, for every model: tune the decision threshold on
        out-of-fold predictions for the target recall, then evaluate once on the
-       test set with bootstrap confidence intervals. The model with the best CV
-       score is selected; test results are reported, never used to choose.
-    5. Plot and save the comparisons, the selected models and their importances.
+       test set with bootstrap confidence intervals.
+    5. Plot and save the comparisons. The final choice is made in Stage 3.
+
+    Returns:
+        Dict[str, Pipeline]: The tuned pipelines, the reference for Stage 3.
     """
     baseline_training = ModelTraining(config, data_preparation)
     advanced_training = AdvancedModelTraining(config, data_preparation)
@@ -304,7 +308,7 @@ def _train_and_evaluate(
         {**baseline_results, **tuned_results}, config['scoring'], FIGURES_DIR / 'model_comparison_cv.png',
     )
 
-    comparison, final_metrics, selected_models, feature_importance = {}, {}, {}, {}
+    comparison = {}
     for variant in ModelTraining.GLUCOSE_VARIANTS:
         baseline_key = f'logistic_regression__{variant}'
         variant_keys = [key for key in tuned_results if key.endswith(f'__{variant}')]
@@ -337,31 +341,7 @@ def _train_and_evaluate(
                 'predict_time_ms': predict_ms,
             }
 
-            if key == best_name:
-                final_metrics[variant] = {
-                    'model_name': key,
-                    'test_at_tuned_threshold': baseline_training.evaluate_on_test(
-                        model, X_test, y_test, key, threshold['threshold'],
-                    ),
-                    'test_at_default_threshold': baseline_training.evaluate_on_test(model, X_test, y_test, key),
-                }
-                selected_models[variant] = {
-                    'model_name': key,
-                    'hyperparameters': tuned_results[key]['best_params'],
-                    'features': ModelTraining.used_feature_names(model),
-                    'cv_score': tuned_results[key]['cv_mean'],
-                    'decision_threshold': threshold,
-                }
-                feature_importance[variant] = baseline_training.explain_model(model, X_test, y_test)
-                plot_confusion_matrix(
-                    model, X_test, y_test, FIGURES_DIR / f'confusion_matrix_test__{variant}.png',
-                    labels=CLASS_LABELS, threshold=threshold['threshold'],
-                    title=f"Test set: {key}\nthreshold {threshold['threshold']:.3f} (target recall "
-                          f"{config['target_recall']:.2f})",
-                )
-                joblib.dump(model, MODELS_DIR / f'best_pipeline__{variant}.joblib')
-
-        comparison[variant] = {'baseline': baseline_key, 'selected': best_name, 'models': models_report}
+        comparison[variant] = {'baseline': baseline_key, 'best_cv': best_name, 'models': models_report}
         _log_comparison(variant, comparison[variant], config['scoring'])
 
         variant_models = {key.split('__')[0]: tuned_models[key] for key in variant_keys}
@@ -377,11 +357,77 @@ def _train_and_evaluate(
             title=f"Calibration curve ({variant})",
         )
 
+    _save_json(comparison, REPORTS_DIR / 'model_comparison.json')
+    return tuned_models
+
+
+def _optimize_and_select(
+    config: Dict[str, Any],
+    data_preparation: DataPreparation,
+    reference_models: Dict[str, Pipeline],
+    X_train: pd.DataFrame,
+    X_test: pd.DataFrame,
+    y_train: pd.Series,
+    y_test: pd.Series,
+) -> None:
+    """
+    Stage 3: model optimization and final selection (README, Model optimization).
+
+    1. Tune every model with a repeated-CV random search, diagnose over- and
+       underfitting before and after, and select one model per glucose variant.
+       All of this sees the training set only.
+    2. Tune each selected model's threshold on out-of-fold predictions.
+    3. Evaluate only the selected models on the test set, with confidence intervals.
+    4. Save the final decision: reports, importances, figures and pipelines.
+    """
+    optimizer = ModelOptimizer(config, data_preparation)
+    start = time.perf_counter()
+    tuned_models, report = optimizer.optimize(reference_models, X_train, y_train)
+    logger.info("Model optimization completed in %.2fs.", time.perf_counter() - start)
+
+    final_metrics, selected_models, feature_importance = {}, {}, {}
+    for variant, variant_report in report.items():
+        key = variant_report['selection']['selected']
+        model = tuned_models[key]
+        threshold = optimizer.trainers[key.split('__')[0]].tune_threshold(model, X_train, y_train)
+        y_score = model.predict_proba(X_test)[:, 1]
+
+        final_metrics[variant] = {
+            'model_name': key,
+            'test_at_tuned_threshold': metrics_from_scores(y_test, y_score, threshold['threshold']),
+            'test_95ci_at_tuned_threshold': bootstrap_ci(
+                y_test, y_score, threshold['threshold'], random_state=config['random_state'],
+            ),
+            'test_at_default_threshold': metrics_from_scores(y_test, y_score),
+        }
+        selected_models[variant] = {
+            'model_name': key,
+            'selection': variant_report['selection'],
+            'hyperparameters': variant_report['models'][key]['best_params'],
+            'features': ModelTraining.used_feature_names(model),
+            'cv_score': variant_report['models'][key]['after']['val_mean'],
+            'nested_cv_score': variant_report['models'][key]['nested_cv']['mean'],
+            'decision_threshold': threshold,
+        }
+        feature_importance[variant] = optimizer.trainers[key.split('__')[0]].explain_model(model, X_test, y_test)
+
+        plot_confusion_matrix(
+            model, X_test, y_test, FIGURES_DIR / f'confusion_matrix_test__{variant}.png',
+            labels=CLASS_LABELS, threshold=threshold['threshold'],
+            title=f"Test set: {key}\nthreshold {threshold['threshold']:.3f} (target recall "
+                  f"{config['target_recall']:.2f})",
+        )
+        plot_learning_curves(
+            {name.split('__')[0]: entry['learning_curve'] for name, entry in variant_report['models'].items()},
+            config['scoring'], FIGURES_DIR / f'learning_curves__{variant}.png', title=f"Learning curves ({variant})",
+        )
+        joblib.dump(model, MODELS_DIR / f'best_pipeline__{variant}.joblib')
+
     # The dummy predicts Negative for everyone: the floor every model must beat on test.
     dummy = DummyClassifier(strategy='most_frequent').fit(X_train, y_train)
     final_metrics['dummy_most_frequent'] = compute_metrics(dummy, X_test, y_test)
 
-    _save_json(comparison, REPORTS_DIR / 'model_comparison.json')
+    _save_json(report, REPORTS_DIR / 'optimization_results.json')
     _save_json(final_metrics, REPORTS_DIR / 'final_metrics.json')
     _save_json(selected_models, REPORTS_DIR / 'selected_models.json')
     _save_json(feature_importance, REPORTS_DIR / 'feature_importance.json')
@@ -390,7 +436,7 @@ def _train_and_evaluate(
 
 def _log_comparison(variant: str, comparison: Dict[str, Any], metric: str) -> None:
     """Logs one row per model: CV score, paired gain over the baseline, and test metrics with 95% CIs."""
-    logger.info("Baseline vs advanced models (%s); selected: %s", variant, comparison['selected'])
+    logger.info("Baseline vs advanced models (%s); best CV score: %s", variant, comparison['best_cv'])
     for key, report in comparison['models'].items():
         vs = report['vs_baseline']
         gain = (f"{vs['mean_diff']:+.4f} ({vs['n_folds_improved']}/{vs['n_folds']} folds, p={vs['paired_t_p_value']:.2f})"
@@ -423,6 +469,8 @@ def main():
     9. Save the reports to reports/. The test set is not used by steps 7-8.
 
     Stage 2: baseline vs advanced models (see `_train_and_evaluate`).
+
+    Stage 3: model optimization and final selection (see `_optimize_and_select`).
     """
     REPORTS_DIR.mkdir(exist_ok=True)
     FIGURES_DIR.mkdir(parents=True, exist_ok=True)
@@ -473,7 +521,8 @@ def main():
     _save_json(comparison, REPORTS_DIR / 'feature_comparison.json')
     logger.info("Feature set comparison completed in %.2fs.", time.perf_counter() - start)
 
-    _train_and_evaluate(config, data_preparation, X_train, X_test, y_train, y_test)
+    reference_models = _train_and_evaluate(config, data_preparation, X_train, X_test, y_train, y_test)
+    _optimize_and_select(config, data_preparation, reference_models, X_train, X_test, y_train, y_test)
 
 
 if __name__ == "__main__":

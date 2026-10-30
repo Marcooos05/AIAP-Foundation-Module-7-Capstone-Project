@@ -159,3 +159,35 @@ def test_invalid_param_grid_raises(base_config, grid):
     base_config["param_grids"]["logistic_regression"] = grid
     with pytest.raises(ValueError, match="param_grids.logistic_regression"):
         validate_config(base_config)
+
+
+def test_missing_search_space_raises(base_config):
+    del base_config["search_spaces"]["gradient_boosting"]
+    with pytest.raises(ValueError, match="'search_spaces' is missing an entry"):
+        validate_config(base_config)
+
+
+def test_invalid_search_space_raises(base_config):
+    base_config["search_spaces"]["random_forest"] = {"classifier__max_depth": []}
+    with pytest.raises(ValueError, match="search_spaces.random_forest"):
+        validate_config(base_config)
+
+
+@pytest.mark.parametrize("key, value", [("cv_repeats", 0), ("n_iter", 1.5), ("nested_n_iter", True)])
+def test_invalid_optimization_count_raises(base_config, key, value):
+    base_config["optimization"][key] = value
+    with pytest.raises(ValueError, match=f"optimization.{key}"):
+        validate_config(base_config)
+
+
+def test_learning_curve_needs_two_points(base_config):
+    base_config["optimization"]["learning_curve_points"] = 1
+    with pytest.raises(ValueError, match="learning_curve_points"):
+        validate_config(base_config)
+
+
+@pytest.mark.parametrize("value", [0, -0.1, "high"])
+def test_invalid_max_fit_gap_raises(base_config, value):
+    base_config["optimization"]["max_fit_gap"] = value
+    with pytest.raises(ValueError, match="max_fit_gap"):
+        validate_config(base_config)

@@ -31,7 +31,7 @@
           0.0
         ]
       },
-      "mean_fit_time_s": 0.0008354663848876953,
+      "mean_fit_time_s": 0.0008093833923339844,
       "best_params": {}
     },
     "logistic_regression_default__with_glucose": {
@@ -65,7 +65,7 @@
           0.7391304347826086
         ]
       },
-      "mean_fit_time_s": 0.007286787033081055,
+      "mean_fit_time_s": 0.007699298858642578,
       "best_params": {}
     },
     "logistic_regression_default__without_glucose": {
@@ -99,7 +99,7 @@
           0.6956521739130435
         ]
       },
-      "mean_fit_time_s": 0.006637859344482422,
+      "mean_fit_time_s": 0.007755851745605469,
       "best_params": {}
     }
   },
@@ -135,7 +135,7 @@
           0.7391304347826086
         ]
       },
-      "mean_fit_time_s": 0.06580963134765624,
+      "mean_fit_time_s": 0.05924744606018066,
       "best_params": {
         "C": 0.1
       }
@@ -171,7 +171,7 @@
           0.6956521739130435
         ]
       },
-      "mean_fit_time_s": 0.023981904983520506,
+      "mean_fit_time_s": 0.019329166412353514,
       "best_params": {
         "C": 10.0
       }
@@ -207,7 +207,7 @@
           0.5652173913043478
         ]
       },
-      "mean_fit_time_s": 1.0603596687316894,
+      "mean_fit_time_s": 0.9365790367126465,
       "best_params": {
         "max_depth": 8,
         "min_samples_leaf": 5,
@@ -245,7 +245,7 @@
           0.6956521739130435
         ]
       },
-      "mean_fit_time_s": 0.11480574607849121,
+      "mean_fit_time_s": 0.09741106033325195,
       "best_params": {
         "learning_rate": 0.05,
         "max_depth": 2,
@@ -283,7 +283,7 @@
           0.6956521739130435
         ]
       },
-      "mean_fit_time_s": 1.071204948425293,
+      "mean_fit_time_s": 0.923099946975708,
       "best_params": {
         "max_depth": 4,
         "min_samples_leaf": 1,
@@ -321,7 +321,7 @@
           0.6086956521739131
         ]
       },
-      "mean_fit_time_s": 0.11101336479187011,
+      "mean_fit_time_s": 0.12345905303955078,
       "best_params": {
         "learning_rate": 0.05,
         "max_depth": 3,
