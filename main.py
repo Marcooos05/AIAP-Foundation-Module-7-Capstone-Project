@@ -1,4 +1,4 @@
-"""Entry point: run the diabetes risk detection pipeline (data preparation and feature engineering stages)."""
+"""Entry point: run the end-to-end diabetes risk detection pipeline."""
 
 import json
 import logging
@@ -6,10 +6,12 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List
 
+import joblib
 import numpy as np
 import pandas as pd
 import yaml
 from sklearn.base import ClassifierMixin
+from sklearn.dummy import DummyClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression, LogisticRegressionCV
 from sklearn.model_selection import StratifiedKFold
@@ -17,12 +19,21 @@ from sklearn.pipeline import Pipeline
 
 from src.config_validation import validate_config
 from src.data_preparation import DataPreparation
+from src.evaluation import (
+    compute_metrics,
+    plot_calibration_curves,
+    plot_confusion_matrix,
+    plot_model_comparison,
+    plot_precision_recall_curves,
+    plot_roc_curves,
+)
 from src.feature_engineering import (
     compare_feature_sets,
     l1_selection,
     passes_retention_rule,
     permutation_ranking,
 )
+from src.models import ModelTraining
 
 logging.basicConfig(
     level=logging.INFO,
@@ -31,7 +42,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 CONFIG_PATH = Path('./src/config.yaml')
+CLASS_LABELS = ['Negative', 'Positive']
+MODELS_DIR = Path('models')
 REPORTS_DIR = Path('reports')
+FIGURES_DIR = REPORTS_DIR / 'figures'
 
 # Feature selection and comparison run once with and once without the leakage candidates (glucose).
 GLUCOSE_SETTINGS = {'with_glucose': True, 'without_glucose': False}
@@ -135,7 +149,8 @@ def _select_features(
         candidates = _applicable_candidates(data_preparation, include)
         l1_model = LogisticRegressionCV(
             l1_ratios=(1.0,), solver='liblinear', Cs=20, scoring=scoring, class_weight='balanced',
-            cv=StratifiedKFold(n_splits=cv, shuffle=True, random_state=seed), use_legacy_attributes=False,
+            cv=StratifiedKFold(n_splits=cv, shuffle=True, random_state=seed), random_state=seed,
+            use_legacy_attributes=False,
         )
         l1 = l1_selection(
             _with_model(data_preparation.create_feature_pipeline(include, engineered=candidates), l1_model),
@@ -236,10 +251,93 @@ def _compare_feature_sets(
     }
 
 
+def _train_and_evaluate(
+    config: Dict[str, Any],
+    data_preparation: DataPreparation,
+    X_train: pd.DataFrame,
+    X_test: pd.DataFrame,
+    y_train: pd.Series,
+    y_test: pd.Series,
+) -> None:
+    """
+    Stage 2: model training and evaluation (README §5).
+
+    1. Cross-validate the baselines (dummy, untuned Logistic Regression).
+    2. Tune Logistic Regression, Decision Tree, Random Forest and Gradient
+       Boosting on both glucose variants with stratified k-fold GridSearchCV.
+    3. Per glucose variant: select the best model by CV score, tune its
+       threshold on out-of-fold predictions for the target recall, then
+       evaluate it once on the test set (at the tuned threshold and at 0.5).
+    4. Plot and save the metrics, the models and the feature importances.
+    """
+    model_training = ModelTraining(config, data_preparation)
+
+    start = time.perf_counter()
+    baseline_results = model_training.train_baselines(X_train, y_train)
+    logger.info("Baseline cross-validation completed in %.2fs.", time.perf_counter() - start)
+
+    start = time.perf_counter()
+    tuned_models, tuned_results = model_training.tune_models(X_train, y_train)
+    logger.info("Hyperparameter tuning completed in %.2fs.", time.perf_counter() - start)
+
+    _save_json({'baselines': baseline_results, 'tuned': tuned_results}, REPORTS_DIR / 'cv_results.json')
+    plot_model_comparison(
+        {**baseline_results, **tuned_results}, config['scoring'], FIGURES_DIR / 'model_comparison_cv.png',
+    )
+
+    final_metrics, selected_models, feature_importance = {}, {}, {}
+    for variant in ModelTraining.GLUCOSE_VARIANTS:
+        best_name = model_training.select_best(tuned_results, variant)
+        best_model = tuned_models[best_name]
+
+        threshold = model_training.tune_threshold(best_model, X_train, y_train)
+        final_metrics[variant] = {
+            'model_name': best_name,
+            'test_at_tuned_threshold': model_training.evaluate_on_test(
+                best_model, X_test, y_test, best_name, threshold['threshold'],
+            ),
+            'test_at_default_threshold': model_training.evaluate_on_test(best_model, X_test, y_test, best_name),
+        }
+        selected_models[variant] = {
+            'model_name': best_name,
+            'hyperparameters': tuned_results[best_name]['best_params'],
+            'features': ModelTraining.used_feature_names(best_model),
+            'cv_score': tuned_results[best_name]['cv_mean'],
+            'decision_threshold': threshold,
+        }
+        feature_importance[variant] = model_training.explain_model(best_model, X_test, y_test)
+
+        plot_confusion_matrix(
+            best_model, X_test, y_test, FIGURES_DIR / f'confusion_matrix_test__{variant}.png',
+            labels=CLASS_LABELS, threshold=threshold['threshold'],
+            title=f"Test set: {best_name}\nthreshold {threshold['threshold']:.3f} (target recall "
+                  f"{config['target_recall']:.2f})",
+        )
+        joblib.dump(best_model, MODELS_DIR / f'best_pipeline__{variant}.joblib')
+
+    # The dummy predicts Negative for everyone: the floor every model must beat on test.
+    dummy = DummyClassifier(strategy='most_frequent').fit(X_train, y_train)
+    final_metrics['dummy_most_frequent'] = compute_metrics(dummy, X_test, y_test)
+
+    best_models = {
+        selected_models[v]['model_name']: tuned_models[selected_models[v]['model_name']]
+        for v in ModelTraining.GLUCOSE_VARIANTS
+    }
+    plot_roc_curves(best_models, X_test, y_test, FIGURES_DIR / 'roc_curve_test.png')
+    plot_precision_recall_curves(best_models, X_test, y_test, FIGURES_DIR / 'pr_curve_test.png')
+    plot_calibration_curves(best_models, X_test, y_test, FIGURES_DIR / 'calibration_curve_test.png')
+
+    _save_json(final_metrics, REPORTS_DIR / 'final_metrics.json')
+    _save_json(selected_models, REPORTS_DIR / 'selected_models.json')
+    _save_json(feature_importance, REPORTS_DIR / 'feature_importance.json')
+    logger.info("Models saved to %s, reports saved to %s", MODELS_DIR.resolve(), REPORTS_DIR.resolve())
+
+
 def main():
     """
-    Runs the data preparation and feature engineering stages of the pipeline:
+    Runs the end-to-end pipeline.
 
+    Stage 1: data preparation and feature engineering
     1. Load and validate the YAML config.
     2. Load the raw dataset and verify required columns are present.
     3. Generate a data validation report on the raw data.
@@ -253,9 +351,11 @@ def main():
        training set and recommend which engineered features to keep.
     9. Save the reports to reports/. The test set is not used by steps 7-8.
 
-    Model training and evaluation will be added as the next stage.
+    Stage 2: model training and evaluation (see `_train_and_evaluate`).
     """
     REPORTS_DIR.mkdir(exist_ok=True)
+    FIGURES_DIR.mkdir(parents=True, exist_ok=True)
+    MODELS_DIR.mkdir(exist_ok=True)
 
     config = _load_config(CONFIG_PATH)
     df = _load_data(config)
@@ -301,6 +401,8 @@ def main():
     comparison = _compare_feature_sets(data_preparation, X_train, y_train, selection)
     _save_json(comparison, REPORTS_DIR / 'feature_comparison.json')
     logger.info("Feature set comparison completed in %.2fs.", time.perf_counter() - start)
+
+    _train_and_evaluate(config, data_preparation, X_train, X_test, y_train, y_test)
 
 
 if __name__ == "__main__":

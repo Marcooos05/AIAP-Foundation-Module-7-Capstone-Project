@@ -234,19 +234,28 @@ AIAP_Mod7_Capstone-Project/
 ├── data/
 │   └── synthetic_data_166.csv      # raw dataset (not committed, see .gitignore)
 ├── src/
+│   ├── models.py                   # ModelTraining: baselines (dummy, untuned LR), GridSearchCV tuning
+│   │                               #   of LR / Decision Tree / Random Forest / Gradient Boosting,
+│   │                               #   model selection, recall-targeted threshold, test evaluation
+│   ├── evaluation.py               # metrics (recall, F2, PR-AUC, Brier...) and evaluation plots
 │   ├── feature_engineering.py      # ClinicalFeatureEngineer (sklearn transformer), feature selection
 │   │                               #   (L1, permutation importance) and CV feature-set comparison
 │   ├── data_preparation.py         # DataPreparation: validation report, cleaning, stratified split,
 │   │                               #   feature pipeline per variant (engineering + scaling + encoding)
 │   ├── config_validation.py        # validates config.yaml before the pipeline runs
-│   └── config.yaml                 # all pipeline settings (paths, split, features, selection rule)
-├── tests/                          # pytest suite (config, data preparation, feature engineering)
+│   └── config.yaml                 # all pipeline settings (paths, split, features, models, grids)
+├── tests/                          # pytest suite (config, data preparation, features, models, evaluation)
 ├── reports/                        # written by main.py
-│   ├── figures/                    # EDA plots
+│   ├── figures/                    # EDA and model evaluation plots
 │   ├── data_validation_report.json
 │   ├── data_preparation_summary.json
 │   ├── feature_selection.json      # L1 coefficients and permutation importance rankings
-│   └── feature_comparison.json     # CV scores per feature set and the recommended features
+│   ├── feature_comparison.json     # CV scores per feature set and the recommended features
+│   ├── cv_results.json             # CV scores of the baselines and tuned models
+│   ├── selected_models.json        # best model per glucose variant, hyperparameters, threshold
+│   ├── final_metrics.json          # test-set metrics of the selected models and the dummy
+│   └── feature_importance.json     # permutation importance of the selected models
+├── models/                         # saved best pipelines (*.joblib, not committed)
 ├── eda.ipynb                       # exploratory analysis and data preparation rationale
 ├── main.py                         # pipeline entry point
 ├── requirements.txt / requirements-dev.txt
@@ -309,7 +318,7 @@ Run from the project root. All settings live in [src/config.yaml](src/config.yam
 | `without_glucose__trees` | the same as trees, minus `fasting_glucose_level` (6) |
 | `without_glucose__logistic_regression` | the same as LR, minus `fasting_glucose_level` and any glucose-derived feature (6) |
 
-`DataPreparation.create_feature_pipeline()` returns an unfitted `Pipeline([("engineer", ClinicalFeatureEngineer(...)), ("preprocess", ColumnTransformer(...))])`. Append a model and cross-validation refits every step on each training fold, so engineering, scaling and encoding never see validation or test rows.
+`DataPreparation.create_feature_pipeline()` returns an unfitted `Pipeline([("engineer", ClinicalFeatureEngineer(...)), ("preprocessor", ColumnTransformer(...))])`. Append a model and cross-validation refits every step on each training fold, so engineering, scaling and encoding never see validation or test rows.
 
 ### Feature selection & validation
 
@@ -343,6 +352,62 @@ Fold-to-fold standard deviation is about 0.04, so every difference above is with
 
 **Decision.** No candidate met the rule, so `lr_engineered_features` is empty and both model families use the 7 (or 6) raw features. This matches the EDA: the relationships are monotonic and near-linear (§11, §14), so bands and flags discard information, and the interaction is weak (AUC 0.59, §17.2); the full reasoning is in eda.ipynb §17. `sqrt_physical_activity` is the most consistent candidate (5/5 folds without glucose), but its gain is too small to justify the extra feature. All candidates stay in the registry, so they can be re-tested with the final models by editing `config.yaml`. `main.py` warns if the config disagrees with the CV recommendation.
 
-**Stage 2: model training & evaluation** (next): Logistic Regression baseline → Decision Tree → Random Forest → Gradient Boosting, with stratified 5-fold CV, `class_weight="balanced"` and threshold tuning for recall (see §5 of the literature review).
+**Stage 2: model training & evaluation** ([src/models.py](src/models.py), [src/evaluation.py](src/evaluation.py))
+
+| Step | What happens | Output |
+|---|---|---|
+| 9. Baselines | Cross-validate a most-frequent dummy and an untuned, balanced Logistic Regression | `reports/cv_results.json` |
+| 10. Tuning | `GridSearchCV` with stratified 5-fold CV on the training set, selected on **PR-AUC**, for Logistic Regression, Decision Tree, Random Forest and Gradient Boosting (`HistGradientBoostingClassifier`) × {with, without} glucose. Every model uses `class_weight="balanced"`; no resampling | `reports/cv_results.json`, `figures/model_comparison_cv.png` |
+| 11. Selection | Best CV PR-AUC within each glucose variant | `reports/selected_models.json` |
+| 12. Threshold | Highest threshold keeping **out-of-fold recall ≥ 0.90** on the training set, so the test set stays untouched | `reports/selected_models.json` |
+| 13. Test evaluation | Each selected model evaluated **once** on the test set, at the tuned threshold and at 0.5, next to the dummy | `reports/final_metrics.json`, ROC / PR / calibration / confusion-matrix figures |
+| 14. Explanation | Permutation importance (drop in PR-AUC) on the test set | `reports/feature_importance.json` |
+| 15. Save | Selected pipelines (feature engineering + preprocessor + model) | `models/best_pipeline__{variant}.joblib` |
 
 ## Results and discussion
+
+> Results from `python main.py` with `random_state=42`. The test set has only 30 positives, so test metrics carry real uncertainty: one missed case moves recall by 3.3 points.
+
+### Cross-validation (training set, 5 folds, PR-AUC mean ± SD)
+
+| Model | With glucose | Without glucose |
+|---|---|---|
+| Dummy (most frequent) | 0.148 | 0.148 |
+| Logistic Regression, untuned | 0.689 | 0.509 |
+| **Logistic Regression**, tuned | 0.693 ± 0.039 | **0.510 ± 0.039** |
+| Decision Tree | 0.619 ± 0.072 | 0.423 ± 0.034 |
+| Random Forest | 0.672 ± 0.046 | 0.496 ± 0.077 |
+| **Gradient Boosting** | **0.693 ± 0.047** | 0.480 ± 0.078 |
+
+- Every model beats the dummy by a wide margin, which confirms the signal found in the EDA.
+- **Logistic Regression is as good as the tree ensembles.** With glucose, Gradient Boosting and LR both reach 0.693 (Gradient Boosting is selected by a margin below 0.001, far inside one SD, so the difference is noise). Without glucose, LR is best. This matches the literature (Christodoulou et al., 2019): ML gives no clear gain over LR on small tabular clinical data.
+- **The Decision Tree is the weakest** and the least stable, as expected for a single tree.
+
+### Test set (200 rows, 30 Positive), at the tuned threshold
+
+| | With glucose: Gradient Boosting | Without glucose: Logistic Regression | Dummy |
+|---|---|---|---|
+| Threshold (target recall 0.90) | 0.340 | 0.322 | — |
+| **Recall (sensitivity)** | **0.90** (27/30) | 0.87 (26/30) | 0.00 |
+| Specificity | 0.76 | 0.64 | 1.00 |
+| Precision | 0.40 | 0.30 | 0.00 |
+| F2 | 0.72 | 0.63 | 0.00 |
+| ROC-AUC | 0.937 | 0.848 | 0.50 |
+| PR-AUC | 0.737 | 0.612 | 0.15 |
+| Brier score | 0.098 | 0.159 | 0.15 |
+| False negatives / false positives | 3 / 41 | 4 / 62 | 30 / 0 |
+
+- **Threshold tuning works as intended.** For the glucose model, moving from 0.5 to 0.34 cut missed cases from 4 to 3 and raised recall from 0.87 to 0.90. The price was 21 extra false positives (20 → 41), which is acceptable for screening (README §5.1). Without glucose, the tuned threshold cut misses from 8 to 4.
+- **Glucose adds a lot.** Without it, ROC-AUC falls from 0.94 to 0.85 and the model needs 21 more false positives to reach similar recall. The non-laboratory model is still useful as a first-pass screen.
+- **Accuracy would have been misleading:** the dummy scores 0.85 accuracy while catching no one.
+
+### Feature importance (permutation, drop in test PR-AUC)
+
+- **With glucose:** `fasting_glucose_level` dominates (0.44), followed by age (0.06) and family history (0.04). Blood pressure and cholesterol add nothing once glucose is known.
+- **Without glucose:** BMI (0.23), family history (0.10), age (0.10) and physical activity (0.05) carry the signal. Blood pressure and cholesterol add little.
+
+### Limitations
+
+- **Label direction.** As found in the EDA, 6 of 7 features relate to the label in the *opposite* direction to clinical knowledge. The models learn the data as given, so their predictions must not be read as clinical risk until the label definition is confirmed.
+- **Calibration.** `class_weight="balanced"` inflates predicted probabilities (see `figures/calibration_curve_test.png`), so scores rank people well but are not true risks. This is the trade-off noted in the literature (van den Goorbergh et al., 2022).
+- **Small test set.** 30 positives give wide confidence intervals; CV results are the more stable comparison.

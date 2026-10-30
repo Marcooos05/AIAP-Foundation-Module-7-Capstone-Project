@@ -115,3 +115,47 @@ def test_invalid_plausible_range_raises(base_config, bounds):
     base_config["plausible_ranges"]["age"] = bounds
     with pytest.raises(ValueError, match="plausible_ranges.age"):
         validate_config(base_config)
+
+
+def test_unsupported_scoring_raises(base_config):
+    base_config["scoring"] = "accuracy"
+    with pytest.raises(ValueError, match="scoring"):
+        validate_config(base_config)
+
+
+@pytest.mark.parametrize("value", [0.0, -0.5, 1.1])
+def test_target_recall_out_of_range_raises(base_config, value):
+    base_config["target_recall"] = value
+    with pytest.raises(ValueError, match="target_recall"):
+        validate_config(base_config)
+
+
+def test_target_recall_of_one_passes(base_config):
+    base_config["target_recall"] = 1.0
+    validate_config(base_config)
+
+
+@pytest.mark.parametrize("value", [0, -2])
+def test_invalid_n_jobs_raises(base_config, value):
+    base_config["n_jobs"] = value
+    with pytest.raises(ValueError, match="n_jobs"):
+        validate_config(base_config)
+
+
+def test_missing_param_grid_raises(base_config):
+    del base_config["param_grids"]["random_forest"]
+    with pytest.raises(ValueError, match="missing an entry"):
+        validate_config(base_config)
+
+
+def test_unknown_param_grid_model_raises(base_config):
+    base_config["param_grids"]["knn"] = {"classifier__n_neighbors": [5]}
+    with pytest.raises(ValueError, match="Unknown model 'knn'"):
+        validate_config(base_config)
+
+
+@pytest.mark.parametrize("grid", [{"classifier__C": []}, {"classifier__C": 1.0}, [1.0]])
+def test_invalid_param_grid_raises(base_config, grid):
+    base_config["param_grids"]["logistic_regression"] = grid
+    with pytest.raises(ValueError, match="param_grids.logistic_regression"):
+        validate_config(base_config)

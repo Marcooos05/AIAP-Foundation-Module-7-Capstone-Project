@@ -5,6 +5,25 @@ min_age: 18                      # rows below this age are dropped: adult screen
 test_size: 0.2                   # stratified 80/20 train/test; no separate validation set (EDA §16)
 random_state: 42
 cv: 5                            # stratified k-fold on the training set, used by modelling (EDA §16)
+scoring: average_precision       # PR-AUC: GridSearchCV and model-selection metric (lit. review #6)
+target_recall: 0.90              # decision threshold = highest one keeping out-of-fold recall >= this (README §5.1)
+n_jobs: -1                       # parallel workers (-1 = all cores)
+# Every model uses class_weight='balanced'; no resampling (README §5.2).
+# gradient_boosting is HistGradientBoostingClassifier, which supports class_weight.
+param_grids:
+  logistic_regression:
+    classifier__C: [0.01, 0.1, 1.0, 10.0]
+  decision_tree:
+    classifier__max_depth: [3, 5, 8]
+    classifier__min_samples_leaf: [5, 20]
+  random_forest:
+    classifier__n_estimators: [300]
+    classifier__max_depth: [4, 8, null]
+    classifier__min_samples_leaf: [1, 5]
+  gradient_boosting:
+    classifier__learning_rate: [0.05, 0.1]
+    classifier__max_depth: [2, 3]
+    classifier__max_iter: [100, 300]
 numeric_features:
   - age
   - bmi

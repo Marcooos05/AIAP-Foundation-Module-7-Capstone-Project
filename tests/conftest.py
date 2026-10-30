@@ -13,7 +13,16 @@ def base_config():
         "min_age": 18,
         "test_size": 0.2,
         "random_state": 42,
-        "cv": 5,
+        "cv": 3,
+        "scoring": "average_precision",
+        "target_recall": 0.9,
+        "n_jobs": 1,
+        "param_grids": {  # one or two values each, so tests stay fast
+            "logistic_regression": {"classifier__C": [0.1, 1.0]},
+            "decision_tree": {"classifier__max_depth": [3]},
+            "random_forest": {"classifier__n_estimators": [20], "classifier__max_depth": [3]},
+            "gradient_boosting": {"classifier__max_iter": [20], "classifier__max_depth": [2]},
+        },
         "numeric_features": [
             "age", "bmi", "blood_pressure", "fasting_glucose_level", "cholesterol_level",
             "physical_activity_frequency",
@@ -76,3 +85,17 @@ def synthetic_df():
         "family_history_of_diabetes": rng.choice(["Absent", "Present"], n, p=[0.6, 0.4]),
         "diabetes_diagnosis": rng.choice(["Negative", "Positive"], n, p=[0.85, 0.15]),
     })
+
+
+@pytest.fixture
+def learnable_df(synthetic_df):
+    """
+    `synthetic_df` with a label models can learn: low glucose and a family
+    history raise the chance of Positive, mirroring the direction found in
+    the real data (EDA §13). About 15-20% Positive.
+    """
+    rng = np.random.default_rng(1)
+    df = synthetic_df.copy()
+    logit = -0.15 * (df["fasting_glucose_level"] - 105) + 1.2 * (df["family_history_of_diabetes"] == "Present") - 2.6
+    df["diabetes_diagnosis"] = np.where(rng.random(len(df)) < 1 / (1 + np.exp(-logit)), "Positive", "Negative")
+    return df

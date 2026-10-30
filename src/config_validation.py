@@ -14,6 +14,10 @@ REQUIRED_KEYS = {
     "test_size": float,
     "random_state": int,
     "cv": int,
+    "scoring": str,
+    "target_recall": float,
+    "n_jobs": int,
+    "param_grids": dict,
     "numeric_features": list,
     "binary_features": list,
     "categorical_levels": dict,
@@ -28,6 +32,13 @@ REQUIRED_KEYS = {
 FEATURE_ROLE_KEYS = ("numeric_features", "binary_features")
 
 ENGINEERED_FEATURES = tuple(FEATURE_SPECS)
+
+# `scoring` is used both by GridSearchCV and to pick the best model, so it must
+# be a threshold-free metric the pipeline computes.
+SUPPORTED_SCORING = ("average_precision", "roc_auc")
+
+# Models trained by src.models.ModelTraining; each needs a grid.
+MODEL_NAMES = ("logistic_regression", "decision_tree", "random_forest", "gradient_boosting")
 
 
 def validate_config(config: Dict[str, Any]) -> None:
@@ -68,6 +79,28 @@ def validate_config(config: Dict[str, Any]) -> None:
 
     if config["min_age"] < 0:
         raise ValueError(f"Config key 'min_age' must be >= 0, got {config['min_age']}.")
+
+    if config["scoring"] not in SUPPORTED_SCORING:
+        raise ValueError(
+            f"Config key 'scoring' must be one of {list(SUPPORTED_SCORING)}, got '{config['scoring']}'."
+        )
+
+    if not 0.0 < config["target_recall"] <= 1.0:
+        raise ValueError(f"Config key 'target_recall' must be in (0, 1], got {config['target_recall']}.")
+
+    if config["n_jobs"] == 0 or config["n_jobs"] < -1:
+        raise ValueError(f"Config key 'n_jobs' must be -1 (all cores) or >= 1, got {config['n_jobs']}.")
+
+    missing_grids = [name for name in MODEL_NAMES if name not in config["param_grids"]]
+    if missing_grids:
+        raise ValueError(f"Config 'param_grids' is missing an entry for model(s): {missing_grids}.")
+    for model_name, grid in config["param_grids"].items():
+        if model_name not in MODEL_NAMES:
+            raise ValueError(f"Unknown model '{model_name}' in 'param_grids'; expected one of {list(MODEL_NAMES)}.")
+        if not isinstance(grid, dict) or not all(isinstance(v, list) and v for v in grid.values()):
+            raise ValueError(
+                f"Config key 'param_grids.{model_name}' must be a dict of non-empty hyperparameter lists."
+            )
 
     for key in (*FEATURE_ROLE_KEYS, "leakage_candidate_features", "lr_engineered_features", "candidate_features"):
         if not all(isinstance(item, str) for item in config[key]):

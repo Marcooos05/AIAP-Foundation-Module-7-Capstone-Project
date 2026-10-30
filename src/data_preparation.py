@@ -285,12 +285,12 @@ class DataPreparation:
             linear_model (bool): See `numeric_features_for`.
             engineered (Optional[Sequence[str]]): See `numeric_features_for`.
         Returns:
-            Pipeline: Steps 'engineer' and 'preprocess'.
+            Pipeline: Steps 'engineer' and 'preprocessor'.
         """
         numeric_features = self.numeric_features_for(include_leakage_candidates, linear_model, engineered)
         return Pipeline([
             ('engineer', ClinicalFeatureEngineer(features=[f for f in numeric_features if f in FEATURE_SPECS])),
-            ('preprocess', self.create_preprocessor(include_leakage_candidates, linear_model, engineered)),
+            ('preprocessor', self.create_preprocessor(include_leakage_candidates, linear_model, engineered)),
         ])
 
     @staticmethod
