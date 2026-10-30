@@ -125,6 +125,76 @@ def threshold_for_target_recall(y_true: pd.Series, y_score: np.ndarray, target_r
     }
 
 
+# Metrics given a bootstrap confidence interval by `bootstrap_ci`.
+CI_METRICS = ('recall', 'specificity', 'precision', 'f2', 'roc_auc', 'average_precision')
+
+
+def bootstrap_ci(
+    y_true: pd.Series,
+    y_score: np.ndarray,
+    threshold: float = 0.5,
+    n_boot: int = 1000,
+    confidence: float = 0.95,
+    random_state: int = 0,
+) -> Dict[str, Dict[str, float]]:
+    """
+    Percentile bootstrap confidence intervals for test-set metrics. Positives
+    and negatives are resampled separately (stratified), so every resample
+    keeps the test set's class balance. With only ~30 test positives, one
+    missed case moves recall by over 3 points, so a point estimate alone
+    overstates how precisely a model is known.
+
+    Args:
+        y_true (pd.Series): True labels (0/1).
+        y_score (np.ndarray): Predicted positive-class probabilities.
+        threshold (float): Decision threshold for the threshold-dependent metrics.
+        n_boot (int): Number of bootstrap resamples.
+        confidence (float): Confidence level of the interval.
+        random_state (int): Seed, so the intervals are reproducible.
+    Returns:
+        Dict[str, Dict[str, float]]: Metric -> point estimate and lower / upper bound.
+    """
+    y_true, y_score = np.asarray(y_true), np.asarray(y_score)
+    rng = np.random.default_rng(random_state)
+    pos, neg = np.flatnonzero(y_true == 1), np.flatnonzero(y_true == 0)
+
+    samples = {metric: [] for metric in CI_METRICS}
+    for _ in range(n_boot):
+        idx = np.concatenate([rng.choice(pos, len(pos)), rng.choice(neg, len(neg))])
+        for metric, value in _ci_metrics(y_true[idx], y_score[idx], threshold).items():
+            samples[metric].append(value)
+
+    point = _ci_metrics(y_true, y_score, threshold)
+    tail = (1 - confidence) / 2 * 100
+    return {
+        metric: {
+            'estimate': point[metric],
+            'lower': float(np.percentile(values, tail)),
+            'upper': float(np.percentile(values, 100 - tail)),
+        }
+        for metric, values in samples.items()
+    }
+
+
+def _ci_metrics(y_true: np.ndarray, y_score: np.ndarray, threshold: float) -> Dict[str, float]:
+    """The `CI_METRICS` only, computed directly so `bootstrap_ci` stays fast; matches `metrics_from_scores`."""
+    y_pred = y_score >= threshold
+    tp = int(np.sum(y_pred & (y_true == 1)))
+    fp = int(np.sum(y_pred & (y_true == 0)))
+    fn = int(np.sum(~y_pred & (y_true == 1)))
+    tn = int(np.sum(~y_pred & (y_true == 0)))
+    recall = tp / (tp + fn) if tp + fn else 0.0
+    precision = tp / (tp + fp) if tp + fp else 0.0
+    return {
+        'recall': recall,
+        'specificity': tn / (tn + fp) if tn + fp else 0.0,
+        'precision': precision,
+        'f2': 5 * precision * recall / (4 * precision + recall) if precision + recall else 0.0,
+        'roc_auc': float(roc_auc_score(y_true, y_score)),
+        'average_precision': float(average_precision_score(y_true, y_score)),
+    }
+
+
 def plot_model_comparison(cv_results: Dict[str, Dict[str, Any]], metric: str, path: Path) -> None:
     """Horizontal bar chart of each model's mean CV score (with ±1 SD error bars), best first."""
     rows = sorted(cv_results.items(), key=lambda item: item[1]['cv_mean'])
@@ -142,25 +212,29 @@ def plot_model_comparison(cv_results: Dict[str, Dict[str, Any]], metric: str, pa
     _save_figure(fig, path)
 
 
-def plot_roc_curves(models: Dict[str, Pipeline], X: pd.DataFrame, y: pd.Series, path: Path) -> None:
+def plot_roc_curves(
+    models: Dict[str, Pipeline], X: pd.DataFrame, y: pd.Series, path: Path, title: str = "ROC curve",
+) -> None:
     """ROC curves for one or more fitted models on the same data."""
     fig, ax = plt.subplots(figsize=(6, 5))
     for name, model in models.items():
         RocCurveDisplay.from_estimator(model, X, y, name=name, ax=ax)
     ax.plot([0, 1], [0, 1], ls='--', color='grey', label='Random')
     ax.legend(loc='lower right', fontsize=8)
-    ax.set_title("ROC curve")
+    ax.set_title(title)
     _save_figure(fig, path)
 
 
-def plot_precision_recall_curves(models: Dict[str, Pipeline], X: pd.DataFrame, y: pd.Series, path: Path) -> None:
+def plot_precision_recall_curves(
+    models: Dict[str, Pipeline], X: pd.DataFrame, y: pd.Series, path: Path, title: str = "Precision-recall curve",
+) -> None:
     """Precision-recall curves for one or more fitted models, with the no-skill (prevalence) line."""
     fig, ax = plt.subplots(figsize=(6, 5))
     for name, model in models.items():
         PrecisionRecallDisplay.from_estimator(model, X, y, name=name, ax=ax)
     ax.axhline(float(np.mean(y)), ls='--', color='grey', label=f"No skill ({np.mean(y):.2f})")
     ax.legend(loc='lower left', fontsize=8)
-    ax.set_title("Precision-recall curve")
+    ax.set_title(title)
     _save_figure(fig, path)
 
 
@@ -182,7 +256,9 @@ def plot_confusion_matrix(
     _save_figure(fig, path)
 
 
-def plot_calibration_curves(models: Dict[str, Pipeline], X: pd.DataFrame, y: pd.Series, path: Path) -> None:
+def plot_calibration_curves(
+    models: Dict[str, Pipeline], X: pd.DataFrame, y: pd.Series, path: Path, title: str = "Calibration curve",
+) -> None:
     """
     Calibration (reliability) curves: predicted probability vs observed
     positive rate. Points on the diagonal mean the predicted risks can be
@@ -193,7 +269,7 @@ def plot_calibration_curves(models: Dict[str, Pipeline], X: pd.DataFrame, y: pd.
     for name, model in models.items():
         CalibrationDisplay.from_estimator(model, X, y, n_bins=5, strategy='quantile', name=name, ax=ax)
     ax.legend(loc='upper left', fontsize=8)
-    ax.set_title("Calibration curve")
+    ax.set_title(title)
     _save_figure(fig, path)
 
 

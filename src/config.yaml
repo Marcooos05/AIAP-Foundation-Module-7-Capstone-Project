@@ -9,13 +9,11 @@ scoring: average_precision       # PR-AUC: GridSearchCV and model-selection metr
 target_recall: 0.90              # decision threshold = highest one keeping out-of-fold recall >= this (README §5.1)
 n_jobs: -1                       # parallel workers (-1 = all cores)
 # Every model uses class_weight='balanced'; no resampling (README §5.2).
-# gradient_boosting is HistGradientBoostingClassifier, which supports class_weight.
+# Baseline: logistic_regression (src/models.py). Advanced: random_forest, gradient_boosting
+# (src/advanced_models.py); gradient_boosting is HistGradientBoostingClassifier, which supports class_weight.
 param_grids:
   logistic_regression:
     classifier__C: [0.01, 0.1, 1.0, 10.0]
-  decision_tree:
-    classifier__max_depth: [3, 5, 8]
-    classifier__min_samples_leaf: [5, 20]
   random_forest:
     classifier__n_estimators: [300]
     classifier__max_depth: [4, 8, null]

@@ -1,18 +1,24 @@
-"""Build, tune, threshold and evaluate the diabetes risk classification pipelines."""
+"""
+Baseline model and the shared training machinery for diabetes risk classification.
+
+The baseline is Logistic Regression (README §5.5): a linear, interpretable
+model that sets the benchmark the advanced models in `src.advanced_models`
+must beat. A most-frequent dummy gives the floor below it. `ModelTraining`
+also holds everything every model shares: pipeline building, stratified CV
+tuning, model selection, threshold tuning, test evaluation and explanation.
+"""
 
 import logging
-from typing import Any, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 from sklearn.base import clone
 from sklearn.dummy import DummyClassifier
-from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
 from sklearn.inspection import permutation_importance
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import GridSearchCV, StratifiedKFold, cross_val_predict, cross_validate
 from sklearn.pipeline import Pipeline
-from sklearn.tree import DecisionTreeClassifier
 
 from src.data_preparation import DataPreparation
 from src.evaluation import compute_metrics, metrics_from_scores, threshold_for_target_recall
@@ -23,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 class ModelTraining:
     """
-    Class for classification model training and evaluation (README §5).
+    Baseline model training and the shared training and evaluation machinery (README §5).
 
     Every model is a scikit-learn pipeline `engineer` -> `preprocessor` ->
     `classifier`, so cross-validation recomputes engineered features and refits
@@ -35,12 +41,16 @@ class ModelTraining:
     glucose (README §5.7). Logistic Regression can use its own engineered
     features (`lr_engineered_features`); none currently pass CV validation (EDA §17).
 
+    Subclasses (e.g. `AdvancedModelTraining`) reuse all of this and only
+    change `MODEL_NAMES` and `_classifier_factories`.
+
     Attributes:
         config (Dict[str, Any]): Configuration dictionary for model training.
         data_preparation (DataPreparation): Builds a fresh, unfitted feature pipeline per model.
     """
 
-    MODEL_NAMES = ('logistic_regression', 'decision_tree', 'random_forest', 'gradient_boosting')
+    # Models tuned by this class: the baseline only.
+    MODEL_NAMES = ('logistic_regression',)
     GLUCOSE_VARIANTS = ('with_glucose', 'without_glucose')
 
     # Extra metrics recorded during CV, alongside the selection metric.
@@ -106,6 +116,7 @@ class ModelTraining:
             scores = cross_validate(pipeline, X_train, y_train, cv=self.cv_splitter, scoring=list(self.CV_METRICS))
             results[name] = self._summarise_cv(
                 {metric: scores[f'test_{metric}'] for metric in self.CV_METRICS}, best_params={},
+                fit_time=float(np.mean(scores['fit_time'])),
             )
             logger.info("Baseline %s: CV %s %.4f", name, self.config['scoring'], results[name]['cv_mean'])
         return results
@@ -149,7 +160,9 @@ class ModelTraining:
                     for metric in self.CV_METRICS
                 }
                 models[key] = grid_search.best_estimator_
-                results[key] = self._summarise_cv(fold_scores, best_params=grid_search.best_params_)
+                results[key] = self._summarise_cv(
+                    fold_scores, best_params=grid_search.best_params_, fit_time=float(cv['mean_fit_time'][best]),
+                )
                 logger.info(
                     "%s: CV %s %.4f ± %.4f with %s",
                     key, scoring, results[key]['cv_mean'], results[key]['cv_std'], results[key]['best_params'],
@@ -267,28 +280,34 @@ class ModelTraining:
         }
         return dict(sorted(importance.items(), key=lambda item: item[1]['mean'], reverse=True))
 
-    def _make_classifier(self, model_name: str) -> Any:
-        """Builds an unfitted classifier with class_weight='balanced'."""
-        random_state = self.config['random_state']
-        classifiers = {
+    def _classifier_factories(self) -> Dict[str, Callable[[], Any]]:
+        """Model name -> factory for an unfitted classifier with class_weight='balanced'."""
+        return {
             'logistic_regression': lambda: LogisticRegression(class_weight='balanced', max_iter=1000),
-            'decision_tree': lambda: DecisionTreeClassifier(class_weight='balanced', random_state=random_state),
-            'random_forest': lambda: RandomForestClassifier(class_weight='balanced', random_state=random_state),
-            'gradient_boosting': lambda: HistGradientBoostingClassifier(
-                class_weight='balanced', random_state=random_state,
-            ),
         }
+
+    def _make_classifier(self, model_name: str) -> Any:
+        """Builds an unfitted classifier from `_classifier_factories`."""
+        classifiers = self._classifier_factories()
         if model_name not in classifiers:
             raise ValueError(f"Unknown model '{model_name}'; expected one of {list(classifiers)}.")
         return classifiers[model_name]()
 
-    def _summarise_cv(self, fold_scores: Dict[str, np.ndarray], best_params: Dict[str, Any]) -> Dict[str, Any]:
-        """Turns per-fold CV scores into JSON-safe summary statistics."""
+    def _summarise_cv(
+        self, fold_scores: Dict[str, np.ndarray], best_params: Dict[str, Any], fit_time: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """
+        Turns per-fold CV scores into JSON-safe summary statistics. The per-fold
+        scores are kept because every model uses the same folds (`cv_splitter`),
+        so models can be compared fold by fold (`compare_to_baseline`).
+        """
         selection = fold_scores[self.config['scoring']]
         return {
             'cv_mean': float(np.mean(selection)),
             'cv_std': float(np.std(selection)),
             'cv_metrics': {metric: float(np.mean(scores)) for metric, scores in fold_scores.items()},
+            'fold_scores': {metric: [float(v) for v in scores] for metric, scores in fold_scores.items()},
+            'mean_fit_time_s': fit_time,
             'best_params': {key.replace('classifier__', ''): value for key, value in best_params.items()},
         }
 

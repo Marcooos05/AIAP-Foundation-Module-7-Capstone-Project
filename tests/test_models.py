@@ -1,5 +1,6 @@
 import pytest
 
+from src.advanced_models import AdvancedModelTraining
 from src.data_preparation import DataPreparation
 from src.models import ModelTraining
 
@@ -16,27 +17,31 @@ def train_test(base_config, learnable_df):
 
 
 class TestBuildPipeline:
-    @pytest.mark.parametrize("model_name", ModelTraining.MODEL_NAMES)
-    def test_every_model_uses_balanced_class_weight(self, model_training, model_name):
-        pipeline = model_training.build_pipeline(model_name, "with_glucose")
+    def test_baseline_is_logistic_regression_only(self):
+        assert ModelTraining.MODEL_NAMES == ("logistic_regression",)
+
+    def test_baseline_uses_balanced_class_weight(self, model_training):
+        pipeline = model_training.build_pipeline("logistic_regression", "with_glucose")
         assert pipeline.named_steps["classifier"].class_weight == "balanced"
+        assert list(pipeline.named_steps) == ["engineer", "preprocessor", "classifier"]
 
     def test_returns_independent_pipelines(self, model_training):
-        first = model_training.build_pipeline("random_forest", "with_glucose")
-        second = model_training.build_pipeline("random_forest", "with_glucose")
+        first = model_training.build_pipeline("logistic_regression", "with_glucose")
+        second = model_training.build_pipeline("logistic_regression", "with_glucose")
         assert first.named_steps["preprocessor"] is not second.named_steps["preprocessor"]
 
-    @pytest.mark.parametrize("model_name, variant, has_glucose, has_lr_features", [
-        ("logistic_regression", "with_glucose", True, True),
-        ("logistic_regression", "without_glucose", False, True),
-        ("random_forest", "with_glucose", True, False),
-        ("gradient_boosting", "without_glucose", False, False),
+    @pytest.mark.parametrize("trainer_cls, model_name, variant, has_glucose, has_lr_features", [
+        (ModelTraining, "logistic_regression", "with_glucose", True, True),
+        (ModelTraining, "logistic_regression", "without_glucose", False, True),
+        (AdvancedModelTraining, "random_forest", "with_glucose", True, False),
+        (AdvancedModelTraining, "gradient_boosting", "without_glucose", False, False),
     ])
     def test_uses_matching_feature_variant(
-        self, model_training, train_test, model_name, variant, has_glucose, has_lr_features,
+        self, base_config, train_test, trainer_cls, model_name, variant, has_glucose, has_lr_features,
     ):
         X_train, _, y_train, _ = train_test
-        pipeline = model_training.build_pipeline(model_name, variant).fit(X_train, y_train)
+        trainer = trainer_cls(base_config, DataPreparation(base_config))
+        pipeline = trainer.build_pipeline(model_name, variant).fit(X_train, y_train)
         names = ModelTraining.used_feature_names(pipeline)
         assert ("fasting_glucose_level" in names) == has_glucose
         assert ("sqrt_physical_activity" in names) == has_lr_features
@@ -44,11 +49,24 @@ class TestBuildPipeline:
 
     def test_unknown_variant_raises(self, model_training):
         with pytest.raises(ValueError, match="Unknown glucose variant"):
-            model_training.build_pipeline("decision_tree", "glucose_only")
+            model_training.build_pipeline("logistic_regression", "glucose_only")
 
-    def test_unknown_model_raises(self, model_training):
+    @pytest.mark.parametrize("model_name", ["knn", "random_forest"])
+    def test_unknown_model_raises(self, model_training, model_name):
+        # The baseline trainer only knows the baseline; ensembles live in AdvancedModelTraining.
         with pytest.raises(ValueError, match="Unknown model"):
-            model_training.build_pipeline("knn", "with_glucose")
+            model_training.build_pipeline(model_name, "with_glucose")
+
+
+class TestTuneModels:
+    def test_tunes_baseline_on_both_variants_and_keeps_fold_scores(self, base_config, model_training, train_test):
+        X_train, _, y_train, _ = train_test
+        models, results = model_training.tune_models(X_train, y_train)
+        assert set(models) == set(results) == {"logistic_regression__with_glucose", "logistic_regression__without_glucose"}
+        for result in results.values():
+            assert len(result["fold_scores"]["average_precision"]) == base_config["cv"]
+            assert result["cv_mean"] == pytest.approx(sum(result["fold_scores"]["average_precision"]) / base_config["cv"])
+            assert result["mean_fit_time_s"] > 0
 
 
 class TestSelectBest:
@@ -76,15 +94,16 @@ class TestTuneThreshold:
 
     def test_does_not_fit_the_given_pipeline(self, model_training, train_test):
         X_train, _, y_train, _ = train_test
-        pipeline = model_training.build_pipeline("decision_tree", "with_glucose")
+        pipeline = model_training.build_pipeline("logistic_regression", "with_glucose")
         model_training.tune_threshold(pipeline, X_train, y_train)
-        assert not hasattr(pipeline.named_steps["classifier"], "tree_")
+        assert not hasattr(pipeline.named_steps["classifier"], "coef_")
 
 
 class TestExplainModel:
-    def test_reports_only_columns_the_model_uses(self, model_training, train_test):
+    def test_reports_only_columns_the_model_uses(self, base_config, model_training, train_test):
         X_train, X_test, y_train, y_test = train_test
-        pipeline = model_training.build_pipeline("random_forest", "without_glucose").fit(X_train, y_train)
+        advanced = AdvancedModelTraining(base_config, DataPreparation(base_config))
+        pipeline = advanced.build_pipeline("random_forest", "without_glucose").fit(X_train, y_train)
         importance = model_training.explain_model(pipeline, X_test, y_test)
         assert "fasting_glucose_level" not in importance
         assert set(importance) == {

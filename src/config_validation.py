@@ -37,8 +37,9 @@ ENGINEERED_FEATURES = tuple(FEATURE_SPECS)
 # be a threshold-free metric the pipeline computes.
 SUPPORTED_SCORING = ("average_precision", "roc_auc")
 
-# Models trained by src.models.ModelTraining; each needs a grid.
-MODEL_NAMES = ("logistic_regression", "decision_tree", "random_forest", "gradient_boosting")
+# Models tuned by src.models.ModelTraining (baseline) and src.advanced_models.AdvancedModelTraining;
+# each needs a grid.
+MODEL_NAMES = ("logistic_regression", "random_forest", "gradient_boosting")
 
 
 def validate_config(config: Dict[str, Any]) -> None:

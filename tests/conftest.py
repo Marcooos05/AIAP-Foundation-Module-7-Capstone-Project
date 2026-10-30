@@ -19,7 +19,6 @@ def base_config():
         "n_jobs": 1,
         "param_grids": {  # one or two values each, so tests stay fast
             "logistic_regression": {"classifier__C": [0.1, 1.0]},
-            "decision_tree": {"classifier__max_depth": [3]},
             "random_forest": {"classifier__n_estimators": [20], "classifier__max_depth": [3]},
             "gradient_boosting": {"classifier__max_iter": [20], "classifier__max_depth": [2]},
         },
