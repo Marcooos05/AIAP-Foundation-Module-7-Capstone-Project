@@ -2,6 +2,10 @@
 
 **Early detection of diabetes risk: a binary classification problem on tabular clinical data**
 
+> **Documentation:** start at [documentation/](documentation/README.md) for the project report, model explanation, API reference, deployment guide, technical documentation and presentation outline.
+>
+> **Not for clinical use.** The data is synthetic and its label runs against clinical knowledge. See [Limitations](documentation/model_explanation.md#limitations).
+
 ## Dataset Overview
 
 **File:** `data/synthetic_data_166.csv`, with 1,000 rows (one per individual) × 8 columns (7 features + 1 target). The filename indicates the data is **synthetic**, and its near-perfectly normal distributions support this (see [eda.ipynb](eda.ipynb)).
@@ -240,6 +244,8 @@ AIAP_Mod7_Capstone-Project/
 │   │                               #   (boosting); compare_to_baseline (paired CV fold differences)
 │   ├── model_optimization.py       # ModelOptimizer: repeated and nested CV, random search with a 1-SE
 │   │                               #   refit, over/underfitting diagnostics, final model selection
+│   ├── predict.py                  # RiskPredictor: loads a model and threshold, validates, scores
+│   ├── api.py                      # FastAPI service: /health and /predict
 │   ├── evaluation.py               # metrics (recall, F2, PR-AUC, Brier...), bootstrap CIs, plots
 │   ├── feature_engineering.py      # ClinicalFeatureEngineer (sklearn transformer), feature selection
 │   │                               #   (L1, permutation importance) and CV feature-set comparison
@@ -247,7 +253,8 @@ AIAP_Mod7_Capstone-Project/
 │   │                               #   feature pipeline per variant (engineering + scaling + encoding)
 │   ├── config_validation.py        # validates config.yaml before the pipeline runs
 │   └── config.yaml                 # all pipeline settings (paths, split, features, models, grids)
-├── tests/                          # pytest suite (config, data preparation, features, models, evaluation)
+├── tests/                          # pytest suite (config, data, features, models, evaluation, API)
+├── documentation/                  # report, model explanation, API, deployment, technical docs, slides
 ├── reports/                        # written by main.py
 │   ├── figures/                    # EDA and model evaluation plots
 │   ├── data_validation_report.json
@@ -263,6 +270,7 @@ AIAP_Mod7_Capstone-Project/
 ├── models/                         # saved best pipelines (*.joblib, not committed)
 ├── eda.ipynb                       # exploratory analysis and data preparation rationale
 ├── main.py                         # pipeline entry point
+├── Dockerfile, .dockerignore        # container for the API (untested: see the deployment guide)
 ├── requirements.txt / requirements-dev.txt
 └── pytest.ini
 ```
@@ -271,7 +279,7 @@ AIAP_Mod7_Capstone-Project/
 
 ### Requirements
 
-Python 3.10+ with the following packages (see `requirements.txt`):
+Python 3.11+ with the following packages (see `requirements.txt`):
 
 | Package | Version | Purpose |
 |---|---|---|
@@ -282,6 +290,8 @@ Python 3.10+ with the following packages (see `requirements.txt`):
 | matplotlib | 3.10.9 | Visualisation |
 | PyYAML | 6.0.3 | Configuration file parsing |
 | joblib | 1.5.3 | Model serialisation |
+| fastapi | 0.162.0 | REST API |
+| uvicorn | 0.54.0 | API server |
 
 ### Installation
 
@@ -295,7 +305,11 @@ source venv/bin/activate  # Linux/macOS
 pip install -r requirements.txt
 ```
 
-Run the tests with `pip install -r requirements-dev.txt` and then `python -m pytest`.
+Run the tests with `pip install -r requirements-dev.txt` and then `python -m pytest`. The notebook also needs `requirements-dev.txt`, for seaborn.
+
+### Serving the model
+
+After `python main.py`, start the API with `uvicorn src.api:app --port 8000`. Interactive docs are at `/docs`. See the [API reference](documentation/api_reference.md) and [Deployment guide](documentation/deployment_guide.md).
 
 ## Pipeline (`python main.py`)
 

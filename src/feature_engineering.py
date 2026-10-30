@@ -35,6 +35,7 @@ class FeatureSpec:
 
 
 def _sqrt_physical_activity(df: pd.DataFrame) -> pd.Series:
+    """Square root of activity. Raises ValueError on a negative value, which has no real square root."""
     n_negative = int((df['physical_activity_frequency'] < 0).sum())
     if n_negative:
         raise ValueError(f"{n_negative} row(s) have a negative physical_activity_frequency.")
@@ -42,6 +43,7 @@ def _sqrt_physical_activity(df: pd.DataFrame) -> pd.Series:
 
 
 def _family_history_x_bmi(df: pd.DataFrame) -> pd.Series:
+    """BMI where there is a family history of diabetes, otherwise 0."""
     return (df['family_history_of_diabetes'] == 'Present').astype(int) * df['bmi']
 
 
@@ -113,12 +115,28 @@ class ClinicalFeatureEngineer(TransformerMixin, BaseEstimator):
     """
 
     def __init__(self, features: Optional[Sequence[str]] = None):
+        """
+        Stores the configuration only, as scikit-learn's `clone` and `get_params` require.
+
+        Args:
+            features (Optional[Sequence[str]]): Engineered features to add; all if None.
+        """
         self.features = features
 
     def _selected_features(self) -> List[str]:
+        """The engineered features to add, resolving None to all of them."""
         return list(FEATURE_SPECS) if self.features is None else list(self.features)
 
     def _check_input(self, X: pd.DataFrame) -> None:
+        """
+        Checks that X is a DataFrame holding complete source columns for known features.
+
+        Args:
+            X (pd.DataFrame): Raw features.
+        Raises:
+            TypeError: If X is not a DataFrame.
+            ValueError: If a feature is unknown, or a source column is absent or has missing values.
+        """
         if not isinstance(X, pd.DataFrame):
             raise TypeError(f"ClinicalFeatureEngineer expects a pandas DataFrame, got {type(X).__name__}.")
 
@@ -170,6 +188,14 @@ class ClinicalFeatureEngineer(TransformerMixin, BaseEstimator):
         return out
 
     def get_feature_names_out(self, input_features: Any = None) -> np.ndarray:
+        """
+        Lists the output columns: the input columns, then the engineered features.
+
+        Args:
+            input_features (Any): Ignored; the names seen in `fit` are used.
+        Returns:
+            np.ndarray: Output column names.
+        """
         check_is_fitted(self, 'feature_names_in_')
         return np.asarray([*self.feature_names_in_, *self._selected_features()], dtype=object)
 

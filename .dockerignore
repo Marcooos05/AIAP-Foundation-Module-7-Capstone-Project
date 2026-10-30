@@ -1,0 +1,7 @@
+# Only what the Dockerfile copies is sent to the build.
+*
+!requirements.txt
+!src/
+!models/
+!reports/selected_models.json
+**/__pycache__

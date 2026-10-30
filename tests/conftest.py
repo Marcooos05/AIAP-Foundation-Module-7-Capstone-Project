@@ -1,6 +1,12 @@
+import json
+
+import joblib
 import numpy as np
 import pandas as pd
 import pytest
+
+from src.data_preparation import DataPreparation
+from src.models import ModelTraining
 
 
 @pytest.fixture
@@ -106,3 +112,34 @@ def learnable_df(synthetic_df):
     logit = -0.15 * (df["fasting_glucose_level"] - 105) + 1.2 * (df["family_history_of_diabetes"] == "Present") - 2.6
     df["diabetes_diagnosis"] = np.where(rng.random(len(df)) < 1 / (1 + np.exp(-logit)), "Positive", "Negative")
     return df
+
+
+@pytest.fixture
+def saved_artifacts(tmp_path, base_config, learnable_df):
+    """Small fitted pipelines and a selection report on disk, so tests don't depend on `python main.py`."""
+    data_prep = DataPreparation(base_config)
+    X_train, _, y_train, _ = data_prep.split_data(data_prep.clean_data(learnable_df))
+    trainer = ModelTraining(base_config, data_prep)
+
+    models_dir, reports_dir = tmp_path / "models", tmp_path / "reports"
+    models_dir.mkdir()
+    reports_dir.mkdir()
+    selection = {}
+    for variant in ModelTraining.GLUCOSE_VARIANTS:
+        pipeline = trainer.build_pipeline("logistic_regression", variant).fit(X_train, y_train)
+        joblib.dump(pipeline, models_dir / f"best_pipeline__{variant}.joblib")
+        selection[variant] = {
+            "model_name": f"logistic_regression__{variant}",
+            "decision_threshold": {"threshold": 0.4},
+        }
+    (reports_dir / "selected_models.json").write_text(json.dumps(selection))
+    return models_dir, reports_dir
+
+
+@pytest.fixture
+def valid_record():
+    """One in-range record, as an API client would send it."""
+    return {
+        "age": 50, "bmi": 28.0, "blood_pressure": 125.0, "fasting_glucose_level": 95.0, "cholesterol_level": 200.0,
+        "physical_activity_frequency": 0.3, "family_history_of_diabetes": "Present",
+    }

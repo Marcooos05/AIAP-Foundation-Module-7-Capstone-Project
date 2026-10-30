@@ -293,6 +293,7 @@ def plot_learning_curves(
 
 
 def _save_figure(fig: plt.Figure, path: Path) -> None:
+    """Saves a figure to `path` and closes it to free memory."""
     fig.tight_layout()
     fig.savefig(path, dpi=120)
     plt.close(fig)

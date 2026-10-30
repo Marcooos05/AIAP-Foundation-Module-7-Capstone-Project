@@ -64,6 +64,7 @@ ARCHITECTURES = {
 
 
 def _save_json(data: dict, path: Path) -> None:
+    """Writes `data` as indented JSON; values JSON can't represent are saved as strings."""
     path.write_text(json.dumps(data, indent=2, default=str))
 
 

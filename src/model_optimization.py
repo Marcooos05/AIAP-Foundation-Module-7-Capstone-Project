@@ -55,6 +55,7 @@ def make_one_se_refit(n_folds: int) -> Callable[[Dict[str, np.ndarray]], int]:
         Callable[[Dict[str, np.ndarray]], int]: Maps `cv_results_` to the chosen index.
     """
     def refit(cv_results: Dict[str, np.ndarray]) -> int:
+        """Returns the index of the chosen candidate in `cv_results`."""
         means = np.asarray(cv_results['mean_test_score'])
         gaps = np.abs(np.asarray(cv_results['mean_train_score']) - means)
         best = int(np.argmax(means))
