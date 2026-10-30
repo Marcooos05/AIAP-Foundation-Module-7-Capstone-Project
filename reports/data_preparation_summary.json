@@ -27,15 +27,14 @@
       ]
     },
     "with_glucose__logistic_regression": {
-      "n_features": 8,
+      "n_features": 7,
       "features": [
         "age",
         "bmi",
         "blood_pressure",
         "fasting_glucose_level",
         "cholesterol_level",
-        "sqrt_physical_activity",
-        "family_history_x_bmi",
+        "physical_activity_frequency",
         "family_history_of_diabetes_Present"
       ]
     },
@@ -51,14 +50,13 @@
       ]
     },
     "without_glucose__logistic_regression": {
-      "n_features": 7,
+      "n_features": 6,
       "features": [
         "age",
         "bmi",
         "blood_pressure",
         "cholesterol_level",
-        "sqrt_physical_activity",
-        "family_history_x_bmi",
+        "physical_activity_frequency",
         "family_history_of_diabetes_Present"
       ]
     }

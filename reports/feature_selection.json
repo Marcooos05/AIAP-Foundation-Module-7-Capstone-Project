@@ -1,0 +1,228 @@
+{
+  "with_glucose": {
+    "l1_logistic_regression": {
+      "C": 0.03359818286283781,
+      "coefficients": {
+        "fasting_glucose_level": -1.272,
+        "age": -0.2476,
+        "family_history_x_bmi": 0.1873,
+        "bmi_band": -0.1813,
+        "age_band": -0.0739,
+        "prediabetic_glucose": -0.0278,
+        "bmi": -0.0182,
+        "sqrt_physical_activity": 0.0068,
+        "blood_pressure": 0.0,
+        "cholesterol_level": 0.0,
+        "bmi_squared": 0.0,
+        "elevated_bp": 0.0,
+        "family_history_of_diabetes_Present": 0.0
+      },
+      "kept": [
+        "fasting_glucose_level",
+        "age",
+        "family_history_x_bmi",
+        "bmi_band",
+        "age_band",
+        "prediabetic_glucose",
+        "bmi",
+        "sqrt_physical_activity"
+      ],
+      "dropped": [
+        "blood_pressure",
+        "cholesterol_level",
+        "bmi_squared",
+        "elevated_bp",
+        "family_history_of_diabetes_Present"
+      ]
+    },
+    "permutation_logistic_regression": {
+      "fasting_glucose_level": {
+        "mean": 0.3566,
+        "std": 0.0545
+      },
+      "bmi_squared": {
+        "mean": 0.1004,
+        "std": 0.0568
+      },
+      "family_history_x_bmi": {
+        "mean": 0.0492,
+        "std": 0.027
+      },
+      "age": {
+        "mean": 0.0381,
+        "std": 0.0529
+      },
+      "bmi_band": {
+        "mean": 0.0116,
+        "std": 0.0206
+      },
+      "sqrt_physical_activity": {
+        "mean": 0.0112,
+        "std": 0.0142
+      },
+      "bmi": {
+        "mean": 0.0037,
+        "std": 0.006
+      },
+      "family_history_of_diabetes_Present": {
+        "mean": 0.0028,
+        "std": 0.0043
+      },
+      "cholesterol_level": {
+        "mean": 0.0021,
+        "std": 0.0107
+      },
+      "prediabetic_glucose": {
+        "mean": 0.0019,
+        "std": 0.0066
+      },
+      "elevated_bp": {
+        "mean": 0.0004,
+        "std": 0.0089
+      },
+      "blood_pressure": {
+        "mean": -0.0031,
+        "std": 0.0062
+      },
+      "age_band": {
+        "mean": -0.0037,
+        "std": 0.009
+      }
+    },
+    "permutation_random_forest": {
+      "fasting_glucose_level": {
+        "mean": 0.3383,
+        "std": 0.0366
+      },
+      "bmi": {
+        "mean": 0.0879,
+        "std": 0.0344
+      },
+      "age": {
+        "mean": 0.0343,
+        "std": 0.0327
+      },
+      "physical_activity_frequency": {
+        "mean": 0.0219,
+        "std": 0.0154
+      },
+      "family_history_of_diabetes_Present": {
+        "mean": 0.0169,
+        "std": 0.016
+      },
+      "cholesterol_level": {
+        "mean": 0.0091,
+        "std": 0.027
+      },
+      "blood_pressure": {
+        "mean": 0.002,
+        "std": 0.0241
+      }
+    }
+  },
+  "without_glucose": {
+    "l1_logistic_regression": {
+      "C": 0.615848211066026,
+      "coefficients": {
+        "bmi_squared": -1.0148,
+        "family_history_x_bmi": 0.7362,
+        "age": -0.5755,
+        "sqrt_physical_activity": 0.424,
+        "bmi_band": -0.2211,
+        "blood_pressure": -0.1689,
+        "elevated_bp": -0.1361,
+        "cholesterol_level": 0.1303,
+        "bmi": 0.0,
+        "age_band": 0.0,
+        "family_history_of_diabetes_Present": 0.0
+      },
+      "kept": [
+        "bmi_squared",
+        "family_history_x_bmi",
+        "age",
+        "sqrt_physical_activity",
+        "bmi_band",
+        "blood_pressure",
+        "elevated_bp",
+        "cholesterol_level"
+      ],
+      "dropped": [
+        "bmi",
+        "age_band",
+        "family_history_of_diabetes_Present"
+      ]
+    },
+    "permutation_logistic_regression": {
+      "bmi_squared": {
+        "mean": 0.2016,
+        "std": 0.0686
+      },
+      "family_history_x_bmi": {
+        "mean": 0.1142,
+        "std": 0.0478
+      },
+      "age": {
+        "mean": 0.0881,
+        "std": 0.0576
+      },
+      "sqrt_physical_activity": {
+        "mean": 0.0754,
+        "std": 0.0107
+      },
+      "bmi_band": {
+        "mean": 0.0326,
+        "std": 0.051
+      },
+      "bmi": {
+        "mean": 0.0194,
+        "std": 0.0109
+      },
+      "cholesterol_level": {
+        "mean": 0.0136,
+        "std": 0.0095
+      },
+      "elevated_bp": {
+        "mean": 0.0056,
+        "std": 0.0077
+      },
+      "family_history_of_diabetes_Present": {
+        "mean": 0.004,
+        "std": 0.0069
+      },
+      "blood_pressure": {
+        "mean": 0.0035,
+        "std": 0.0052
+      },
+      "age_band": {
+        "mean": -0.0006,
+        "std": 0.0063
+      }
+    },
+    "permutation_random_forest": {
+      "bmi": {
+        "mean": 0.1332,
+        "std": 0.0446
+      },
+      "physical_activity_frequency": {
+        "mean": 0.0837,
+        "std": 0.0551
+      },
+      "family_history_of_diabetes_Present": {
+        "mean": 0.0544,
+        "std": 0.0261
+      },
+      "age": {
+        "mean": 0.0171,
+        "std": 0.038
+      },
+      "blood_pressure": {
+        "mean": 0.0099,
+        "std": 0.0209
+      },
+      "cholesterol_level": {
+        "mean": 0.0052,
+        "std": 0.0226
+      }
+    }
+  }
+}

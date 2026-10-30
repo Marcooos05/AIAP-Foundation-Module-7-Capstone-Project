@@ -68,21 +68,33 @@ def test_leakage_candidate_not_numeric_raises(base_config):
         validate_config(base_config)
 
 
-def test_unknown_swap_target_raises(base_config):
-    base_config["lr_feature_swaps"] = {"physical_activity_frequency": "log_activity"}
-    with pytest.raises(ValueError, match="engineered feature"):
+def test_unknown_lr_engineered_feature_raises(base_config):
+    base_config["lr_engineered_features"] = ["age_x_bmi"]
+    with pytest.raises(ValueError, match="lr_engineered_features"):
         validate_config(base_config)
 
 
-def test_swap_of_unconfigured_feature_raises(base_config):
-    base_config["lr_feature_swaps"] = {"weight": "sqrt_physical_activity"}
-    with pytest.raises(ValueError, match="lr_feature_swaps key"):
+def test_engineered_feature_from_unconfigured_column_raises(base_config):
+    base_config["numeric_features"].remove("physical_activity_frequency")
+    with pytest.raises(ValueError, match="needs feature"):
         validate_config(base_config)
 
 
-def test_unknown_extra_feature_raises(base_config):
-    base_config["lr_extra_features"] = ["age_x_bmi"]
-    with pytest.raises(ValueError, match="lr_extra_features"):
+def test_unknown_candidate_feature_raises(base_config):
+    base_config["candidate_features"] = ["bmi_band", "age_x_bmi"]
+    with pytest.raises(ValueError, match="candidate_features"):
+        validate_config(base_config)
+
+
+def test_negative_min_cv_gain_raises(base_config):
+    base_config["min_cv_gain"] = -0.01
+    with pytest.raises(ValueError, match="min_cv_gain"):
+        validate_config(base_config)
+
+
+def test_unknown_selection_scoring_raises(base_config):
+    base_config["selection_scoring"] = "pr_auc"
+    with pytest.raises(ValueError, match="selection_scoring"):
         validate_config(base_config)
 
 

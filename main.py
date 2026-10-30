@@ -1,17 +1,28 @@
-"""Entry point: run the diabetes risk detection pipeline (data preparation stage)."""
+"""Entry point: run the diabetes risk detection pipeline (data preparation and feature engineering stages)."""
 
 import json
 import logging
 import time
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import numpy as np
 import pandas as pd
 import yaml
+from sklearn.base import ClassifierMixin
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression, LogisticRegressionCV
+from sklearn.model_selection import StratifiedKFold
+from sklearn.pipeline import Pipeline
 
 from src.config_validation import validate_config
 from src.data_preparation import DataPreparation
+from src.feature_engineering import (
+    compare_feature_sets,
+    l1_selection,
+    passes_retention_rule,
+    permutation_ranking,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -21,6 +32,9 @@ logger = logging.getLogger(__name__)
 
 CONFIG_PATH = Path('./src/config.yaml')
 REPORTS_DIR = Path('reports')
+
+# Feature selection and comparison run once with and once without the leakage candidates (glucose).
+GLUCOSE_SETTINGS = {'with_glucose': True, 'without_glucose': False}
 
 
 def _save_json(data: dict, path: Path) -> None:
@@ -62,35 +76,182 @@ def _check_feature_variants(
     X_test: pd.DataFrame,
 ) -> Dict[str, Dict[str, Any]]:
     """
-    Fits each feature variant's preprocessor on the training set and transforms
-    both sets, as a sanity check before modelling: no NaNs, expected columns.
+    Fits each feature variant's feature pipeline (engineering + preprocessing)
+    on the training set and transforms both sets, as a sanity check before
+    modelling: no NaNs, expected columns.
     """
     variants = {}
     for name, kwargs in data_preparation.feature_variants().items():
-        preprocessor = data_preparation.create_preprocessor(**kwargs).fit(X_train)
-        Xt_train, Xt_test = preprocessor.transform(X_train), preprocessor.transform(X_test)
+        feature_pipeline = data_preparation.create_feature_pipeline(**kwargs).fit(X_train)
+        Xt_train, Xt_test = feature_pipeline.transform(X_train), feature_pipeline.transform(X_test)
         if np.isnan(Xt_train).any() or np.isnan(Xt_test).any():
             raise ValueError(f"Feature variant '{name}' produced NaN values.")
 
-        feature_names = list(preprocessor.get_feature_names_out())
+        feature_names = list(feature_pipeline.get_feature_names_out())
         logger.info("Feature variant %s: %d features %s", name, len(feature_names), feature_names)
         variants[name] = {'n_features': len(feature_names), 'features': feature_names}
     return variants
 
 
+def _with_model(feature_pipeline: Pipeline, model: ClassifierMixin) -> Pipeline:
+    """Appends a model to a feature pipeline."""
+    return Pipeline([*feature_pipeline.steps, ('model', model)])
+
+
+def _logistic_regression(config: Dict[str, Any]) -> LogisticRegression:
+    """The baseline model used to judge engineered features (README §5.5)."""
+    return LogisticRegression(class_weight='balanced', max_iter=1000, random_state=config['random_state'])
+
+
+def _random_forest(config: Dict[str, Any]) -> RandomForestClassifier:
+    """A tree model, to check whether it gains anything from the engineered features."""
+    return RandomForestClassifier(
+        n_estimators=300, min_samples_leaf=5, class_weight='balanced', random_state=config['random_state'],
+    )
+
+
+def _applicable_candidates(data_preparation: DataPreparation, include_leakage_candidates: bool) -> List[str]:
+    """Candidate features available in a glucose setting (glucose-derived ones are dropped without glucose)."""
+    candidates = data_preparation.config['candidate_features']
+    available = data_preparation.numeric_features_for(include_leakage_candidates, engineered=candidates)
+    return [c for c in candidates if c in available]
+
+
+def _select_features(
+    data_preparation: DataPreparation,
+    X_train: pd.DataFrame,
+    y_train: pd.Series,
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Ranks the raw and candidate features on the training set only, with and
+    without glucose: L1-regularised Logistic Regression (regularisation-based
+    selection) and permutation importance on held-out CV folds (model-based,
+    for Logistic Regression and Random Forest).
+    """
+    config = data_preparation.config
+    cv, seed, scoring = config['cv'], config['random_state'], config['selection_scoring']
+    selection = {}
+    for setting, include in GLUCOSE_SETTINGS.items():
+        candidates = _applicable_candidates(data_preparation, include)
+        l1_model = LogisticRegressionCV(
+            l1_ratios=(1.0,), solver='liblinear', Cs=20, scoring=scoring, class_weight='balanced',
+            cv=StratifiedKFold(n_splits=cv, shuffle=True, random_state=seed), use_legacy_attributes=False,
+        )
+        l1 = l1_selection(
+            _with_model(data_preparation.create_feature_pipeline(include, engineered=candidates), l1_model),
+            X_train, y_train,
+        )
+        selection[setting] = {
+            'l1_logistic_regression': l1,
+            'permutation_logistic_regression': permutation_ranking(
+                _with_model(data_preparation.create_feature_pipeline(include, engineered=candidates),
+                            _logistic_regression(config)),
+                X_train, y_train, cv, seed, scoring,
+            ),
+            'permutation_random_forest': permutation_ranking(
+                _with_model(data_preparation.create_feature_pipeline(include), _random_forest(config)),
+                X_train, y_train, cv, seed, scoring,
+            ),
+        }
+        logger.info("L1 selection (%s, C=%.4f): kept %s, dropped %s", setting, l1['C'], l1['kept'], l1['dropped'])
+    return selection
+
+
+def _compare_feature_sets(
+    data_preparation: DataPreparation,
+    X_train: pd.DataFrame,
+    y_train: pd.Series,
+    selection: Dict[str, Dict[str, Any]],
+) -> Dict[str, Any]:
+    """
+    Cross-validates the raw-feature baseline against engineered feature sets
+    on the training set only: each candidate on its own, all candidates, the
+    L1-selected ones and the current config. A candidate is recommended if it
+    meets the retention rule for Logistic Regression and L1 keeps it, in every
+    glucose setting where it applies.
+    """
+    config = data_preparation.config
+    cv, seed, min_gain = config['cv'], config['random_state'], config['min_cv_gain']
+    comparison = {}
+    for setting, include in GLUCOSE_SETTINGS.items():
+        candidates = _applicable_candidates(data_preparation, include)
+        l1_kept = selection[setting]['l1_logistic_regression']['kept']
+        feature_sets = {
+            'baseline': [],
+            **{f'+{c}': [c] for c in candidates},
+            'all_candidates': candidates,
+            'l1_selected': [c for c in candidates if c in l1_kept],
+            'config_lr': data_preparation.lr_engineered_features(),
+        }
+        lr_results = compare_feature_sets(
+            {name: _with_model(data_preparation.create_feature_pipeline(include, engineered=engineered),
+                               _logistic_regression(config))
+             for name, engineered in feature_sets.items()},
+            X_train, y_train, cv, seed, primary_metric=config['selection_scoring'],
+        )
+        rf_results = compare_feature_sets(
+            {name: _with_model(data_preparation.create_feature_pipeline(include, engineered=feature_sets[name]),
+                               _random_forest(config))
+             for name in ('baseline', 'all_candidates')},
+            X_train, y_train, cv, seed, primary_metric=config['selection_scoring'],
+        )
+        retained = [
+            c for c in candidates if c in l1_kept and passes_retention_rule(lr_results[f'+{c}'], cv, min_gain)
+        ]
+        comparison[setting] = {
+            'feature_sets': feature_sets,
+            'logistic_regression': lr_results,
+            'random_forest': rf_results,
+            'retained': retained,
+        }
+
+        logger.info("Feature set comparison (%s, Logistic Regression, %d-fold CV on train):", setting, cv)
+        for name, result in lr_results.items():
+            logger.info(
+                "  %-28s PR-AUC %.4f ± %.4f  ROC-AUC %.4f  gain %+.4f  folds improved %d/%d",
+                name, result['average_precision_mean'], result['average_precision_std'],
+                result['roc_auc_mean'], result['gain_vs_baseline'], result['n_folds_improved'], cv,
+            )
+
+    recommended = [
+        c for c in config['candidate_features']
+        if all(c in result['retained'] for setting, result in comparison.items()
+               if c in _applicable_candidates(data_preparation, GLUCOSE_SETTINGS[setting]))
+    ]
+    configured = data_preparation.lr_engineered_features()
+    logger.info("Recommended engineered features for Logistic Regression: %s", recommended)
+    if set(configured) != set(recommended):
+        logger.warning(
+            "Configured Logistic Regression features %s differ from the CV recommendation %s; "
+            "update lr_engineered_features in config.yaml.", configured, recommended,
+        )
+
+    return {
+        'retention_rule': (
+            f"mean {config['selection_scoring']} gain over baseline >= {min_gain} in Logistic Regression, "
+            f"improved in more than half of {cv} folds, and kept by L1, in every glucose setting"
+        ),
+        **comparison,
+        'recommended_features': recommended,
+    }
+
+
 def main():
     """
-    Runs the data preparation stage of the pipeline:
+    Runs the data preparation and feature engineering stages of the pipeline:
 
     1. Load and validate the YAML config.
     2. Load the raw dataset and verify required columns are present.
     3. Generate a data validation report on the raw data.
     4. Clean the data (duplicates, missing targets, category levels, rows
-       below the minimum age) and engineer features.
+       below the minimum age).
     5. Split into stratified train/test sets.
-    6. Fit and check the preprocessor for every feature variant
-       (with / without glucose, trees / Logistic Regression).
-    7. Save the validation report and a data preparation summary to reports/.
+    6. Fit and check the feature pipeline (engineering + preprocessing) for
+       every feature variant (with / without glucose, trees / Logistic Regression).
+    7. Rank features on the training set (L1 and permutation importance).
+    8. Cross-validate the baseline against engineered feature sets on the
+       training set and recommend which engineered features to keep.
+    9. Save the reports to reports/. The test set is not used by steps 7-8.
 
     Model training and evaluation will be added as the next stage.
     """
@@ -130,6 +291,16 @@ def main():
     }
     _save_json(summary, REPORTS_DIR / 'data_preparation_summary.json')
     logger.info("Data preparation summary saved to %s", (REPORTS_DIR / 'data_preparation_summary.json').resolve())
+
+    start = time.perf_counter()
+    selection = _select_features(data_preparation, X_train, y_train)
+    _save_json(selection, REPORTS_DIR / 'feature_selection.json')
+    logger.info("Feature selection completed in %.2fs.", time.perf_counter() - start)
+
+    start = time.perf_counter()
+    comparison = _compare_feature_sets(data_preparation, X_train, y_train, selection)
+    _save_json(comparison, REPORTS_DIR / 'feature_comparison.json')
+    logger.info("Feature set comparison completed in %.2fs.", time.perf_counter() - start)
 
 
 if __name__ == "__main__":

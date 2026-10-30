@@ -71,20 +71,9 @@ class TestCleanData:
         with pytest.raises(ValueError, match="missing required raw column"):
             DataPreparation(base_config).clean_data(raw_df.drop(columns=["bmi"]))
 
-    def test_engineers_sqrt_activity(self, base_config, raw_df):
+    def test_does_not_add_engineered_features(self, base_config, raw_df):
         cleaned = DataPreparation(base_config).clean_data(raw_df)
-        np.testing.assert_allclose(cleaned["sqrt_physical_activity"], np.sqrt(cleaned["physical_activity_frequency"]))
-
-    def test_engineers_family_history_x_bmi(self, base_config, raw_df):
-        cleaned = DataPreparation(base_config).clean_data(raw_df)
-        present = cleaned["family_history_of_diabetes"] == "Present"
-        assert (cleaned.loc[present, "family_history_x_bmi"] == cleaned.loc[present, "bmi"]).all()
-        assert (cleaned.loc[~present, "family_history_x_bmi"] == 0).all()
-
-    def test_negative_activity_raises(self, base_config, raw_df):
-        raw_df.loc[0, "physical_activity_frequency"] = -0.1
-        with pytest.raises(ValueError, match="negative physical_activity_frequency"):
-            DataPreparation(base_config).clean_data(raw_df)
+        assert set(cleaned.columns) == set(raw_df.columns)
 
 
 class TestSplitData:
@@ -135,8 +124,8 @@ class TestCreatePreprocessor:
     def test_feature_variants(self, base_config, train_test, variant, n_features):
         X_train, X_test = train_test
         data_prep = DataPreparation(base_config)
-        preprocessor = data_prep.create_preprocessor(**data_prep.feature_variants()[variant]).fit(X_train)
-        names = list(preprocessor.get_feature_names_out())
+        pipeline = data_prep.create_feature_pipeline(**data_prep.feature_variants()[variant]).fit(X_train)
+        names = list(pipeline.get_feature_names_out())
 
         assert len(names) == n_features
         assert "family_history_of_diabetes_Present" in names
@@ -146,7 +135,33 @@ class TestCreatePreprocessor:
             assert {"sqrt_physical_activity", "family_history_x_bmi"} <= set(names)
         else:
             assert not {"sqrt_physical_activity", "family_history_x_bmi"} & set(names)
-        assert not np.isnan(preprocessor.transform(X_test)).any()
+        assert not np.isnan(pipeline.transform(X_test)).any()
+
+    def test_engineers_only_the_features_the_variant_uses(self, base_config, train_test):
+        X_train, _ = train_test
+        pipeline = DataPreparation(base_config).create_feature_pipeline(linear_model=True)
+        assert pipeline.named_steps["engineer"].features == ["sqrt_physical_activity", "family_history_x_bmi"]
+        assert DataPreparation(base_config).create_feature_pipeline().named_steps["engineer"].features == []
+
+    def test_feature_pipeline_does_not_modify_input(self, base_config, train_test):
+        X_train, _ = train_test
+        before = X_train.copy()
+        DataPreparation(base_config).create_feature_pipeline(linear_model=True).fit_transform(X_train)
+        pd.testing.assert_frame_equal(X_train, before)
+
+    @pytest.mark.parametrize("include_glucose", [True, False])
+    def test_explicit_engineered_features(self, base_config, include_glucose):
+        # Independent of the configured LR features, so candidate comparisons don't shift with config.
+        base_config["lr_engineered_features"] = []
+        features = DataPreparation(base_config).numeric_features_for(
+            include_glucose, engineered=["sqrt_physical_activity", "bmi_band", "prediabetic_glucose"],
+        )
+        assert "physical_activity_frequency" not in features
+        assert features.index("sqrt_physical_activity") == 5 - (not include_glucose)
+        assert "bmi_band" in features
+        # Glucose-derived features leave with glucose.
+        assert ("prediabetic_glucose" in features) == include_glucose
+        assert ("fasting_glucose_level" in features) == include_glucose
 
     def test_scaler_fitted_on_training_data_only(self, base_config, train_test):
         X_train, X_test = train_test

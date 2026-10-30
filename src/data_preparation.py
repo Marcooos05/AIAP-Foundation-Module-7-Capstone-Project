@@ -1,22 +1,25 @@
-"""Data validation, cleaning, feature engineering, splitting and preprocessing for diabetes risk detection."""
+"""Data validation, cleaning, splitting and preprocessing for diabetes risk detection."""
 
 import logging
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-import numpy as np
 import pandas as pd
 from sklearn.compose import ColumnTransformer
 from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
+
+from src.feature_engineering import FEATURE_SPECS, ClinicalFeatureEngineer, features_derived_from
 
 logger = logging.getLogger(__name__)
 
 
 class DataPreparation:
     """
-    Class for data validation, cleaning, feature engineering, splitting and
-    preprocessing of the diabetes dataset, following the decisions made in
-    EDA.ipynb (Part 3, §15-21).
+    Class for data validation, cleaning, splitting and preprocessing of the
+    diabetes dataset, following the decisions made in eda.ipynb (Part 3,
+    §15-21). Feature engineering itself lives in `src.feature_engineering`;
+    this class decides which engineered features each variant uses.
 
     Attributes:
         config (Dict[str, Any]): Configuration dictionary for data preparation.
@@ -26,9 +29,6 @@ class DataPreparation:
         'age', 'bmi', 'blood_pressure', 'fasting_glucose_level', 'cholesterol_level',
         'physical_activity_frequency', 'family_history_of_diabetes',
     )
-
-    # Created during cleaning, so they are not expected in the raw CSV.
-    ENGINEERED_FEATURES = ('sqrt_physical_activity', 'family_history_x_bmi')
 
     def __init__(self, config: Dict[str, Any]):
         """
@@ -94,14 +94,14 @@ class DataPreparation:
 
     def clean_data(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Cleans the raw data and engineers model features.
+        Cleans the raw data. Engineered features are added later, inside the
+        model pipeline (`create_feature_pipeline`).
 
-        Steps (see EDA.ipynb for the evidence behind each one):
+        Steps (see eda.ipynb for the evidence behind each one):
             1. Drop exact duplicate rows and rows with a missing target.
             2. Strip whitespace from text columns and check every value is an
                expected level (EDA §3.3).
             3. Drop rows below `min_age`: out of scope for adult screening (EDA §15).
-            4. Engineer `sqrt_physical_activity` and `family_history_x_bmi` (EDA §16).
 
         Every step uses only values from the same row, so it is safe to run
         before the train/test split. Statistical outliers are kept on purpose:
@@ -144,7 +144,6 @@ class DataPreparation:
 
         df = self._standardise_categorical_levels(df)
         df = self._drop_below_min_age(df)
-        df = self._engineer_features(df)
 
         df = df.reset_index(drop=True)
         logger.info("Data cleaning process completed. Rows after cleaning: %d", len(df))
@@ -156,7 +155,7 @@ class DataPreparation:
         the data into training and test sets, stratified on the target so both
         keep the same class ratio. There is no separate validation set: with
         ~150 positives, model selection uses stratified k-fold CV on the
-        training set instead (EDA §17).
+        training set instead (EDA §16).
 
         Args:
             df (pd.DataFrame): Input DataFrame containing cleaned data.
@@ -186,41 +185,77 @@ class DataPreparation:
         logger.info("Data splitting process completed.")
         return X_train, X_test, y_train, y_test
 
-    def numeric_features_for(self, include_leakage_candidates: bool = True, linear_model: bool = False) -> List[str]:
+    def lr_engineered_features(self) -> List[str]:
+        """
+        Lists the engineered features the Logistic Regression variants use,
+        chosen from the CV comparison in main.py (EDA §17).
+
+        Returns:
+            List[str]: Engineered feature names.
+        """
+        return list(self.config['lr_engineered_features'])
+
+    def numeric_features_for(
+        self,
+        include_leakage_candidates: bool = True,
+        linear_model: bool = False,
+        engineered: Optional[Sequence[str]] = None,
+    ) -> List[str]:
         """
         Lists the numeric features for one feature variant.
 
         Args:
             include_leakage_candidates (bool): Keep `leakage_candidate_features`
-                (fasting glucose). False gives the "without glucose" variant (README §5.7).
-            linear_model (bool): Apply the Logistic Regression changes: swap raw
-                features for their engineered versions and add the extra features (EDA §20).
+                (fasting glucose) and features derived from them. False gives the
+                "without glucose" variant (README §5.7).
+            linear_model (bool): Use the Logistic Regression engineered features
+                (`lr_engineered_features`); ignored when `engineered` is given.
+            engineered (Optional[Sequence[str]]): Engineered features to use instead,
+                e.g. one candidate at a time when comparing feature sets. A feature
+                whose `FeatureSpec.replaces` is set takes the place of that raw
+                feature; any other is appended.
         Returns:
             List[str]: Numeric feature names, in config order.
         """
+        if engineered is None:
+            engineered = self.lr_engineered_features() if linear_model else []
+
         features = list(self.config['numeric_features'])
+        for name in engineered:
+            replaces = FEATURE_SPECS[name].replaces
+            if replaces in features:
+                features = [name if f == replaces else f for f in features]
+            elif name not in features:
+                features.append(name)
+
         if not include_leakage_candidates:
-            features = [f for f in features if f not in self.config['leakage_candidate_features']]
-        if linear_model:
-            swaps = self.config['lr_feature_swaps']
-            features = [swaps.get(f, f) for f in features] + list(self.config['lr_extra_features'])
+            leakage = self.config['leakage_candidate_features']
+            excluded = {*leakage, *features_derived_from(leakage)}
+            features = [f for f in features if f not in excluded]
         return features
 
-    def create_preprocessor(self, include_leakage_candidates: bool = True, linear_model: bool = False) -> ColumnTransformer:
+    def create_preprocessor(
+        self,
+        include_leakage_candidates: bool = True,
+        linear_model: bool = False,
+        engineered: Optional[Sequence[str]] = None,
+    ) -> ColumnTransformer:
         """
         Builds a new, unfitted preprocessor: `StandardScaler` for numeric
         features and a single 0/1 column per binary feature. Called once per
         model pipeline, so each pipeline owns an independent instance and the
         scaler is fitted on training data (or each CV training fold) only.
         Columns not selected are dropped, so excluded features never reach the model.
+        Engineered features must already be present (see `create_feature_pipeline`).
 
         Args:
             include_leakage_candidates (bool): See `numeric_features_for`.
             linear_model (bool): See `numeric_features_for`.
+            engineered (Optional[Sequence[str]]): See `numeric_features_for`.
         Returns:
             ColumnTransformer: A preprocessor for data transformation.
         """
-        numeric_features = self.numeric_features_for(include_leakage_candidates, linear_model)
+        numeric_features = self.numeric_features_for(include_leakage_candidates, linear_model, engineered)
         binary_features = self.config['binary_features']
 
         transformers = []
@@ -233,6 +268,31 @@ class DataPreparation:
 
         return ColumnTransformer(transformers=transformers, remainder='drop', verbose_feature_names_out=False)
 
+    def create_feature_pipeline(
+        self,
+        include_leakage_candidates: bool = True,
+        linear_model: bool = False,
+        engineered: Optional[Sequence[str]] = None,
+    ) -> Pipeline:
+        """
+        Builds a new, unfitted feature pipeline for raw (cleaned) data: a
+        `ClinicalFeatureEngineer` that adds only the engineered features this
+        variant uses, followed by `create_preprocessor`. Append a model to get
+        a full pipeline that cross-validation refits on every fold.
+
+        Args:
+            include_leakage_candidates (bool): See `numeric_features_for`.
+            linear_model (bool): See `numeric_features_for`.
+            engineered (Optional[Sequence[str]]): See `numeric_features_for`.
+        Returns:
+            Pipeline: Steps 'engineer' and 'preprocess'.
+        """
+        numeric_features = self.numeric_features_for(include_leakage_candidates, linear_model, engineered)
+        return Pipeline([
+            ('engineer', ClinicalFeatureEngineer(features=[f for f in numeric_features if f in FEATURE_SPECS])),
+            ('preprocess', self.create_preprocessor(include_leakage_candidates, linear_model, engineered)),
+        ])
+
     @staticmethod
     def feature_variants() -> Dict[str, Dict[str, bool]]:
         """
@@ -240,7 +300,7 @@ class DataPreparation:
         features (fasting glucose), each for tree models and for Logistic Regression.
 
         Returns:
-            Dict[str, Dict[str, bool]]: Variant name -> keyword arguments for `create_preprocessor`.
+            Dict[str, Dict[str, bool]]: Variant name -> keyword arguments for `create_feature_pipeline`.
         """
         return {
             'with_glucose__trees': {'include_leakage_candidates': True, 'linear_model': False},
@@ -291,29 +351,3 @@ class DataPreparation:
             int(below.sum()), self.config['min_age'], dropped_classes,
         )
         return df.loc[~below]
-
-    def _engineer_features(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Creates the engineered features from EDA §16. Both use only values from
-        the same row, so they are safe to compute before the train/test split.
-
-        - `sqrt_physical_activity`: square root of the right-skewed
-          `physical_activity_frequency` (skew 0.57 -> -0.06).
-        - `family_history_x_bmi`: BMI where there is a family history, else 0.
-
-        Args:
-            df (pd.DataFrame): DataFrame after cleaning.
-        Returns:
-            pd.DataFrame: The DataFrame with engineered features added.
-        Raises:
-            ValueError: If `physical_activity_frequency` has a negative value.
-        """
-        n_negative = int((df['physical_activity_frequency'] < 0).sum())
-        if n_negative:
-            raise ValueError(f"{n_negative} row(s) have a negative physical_activity_frequency.")
-
-        df = df.copy()
-        df['sqrt_physical_activity'] = np.sqrt(df['physical_activity_frequency'])
-        df['family_history_x_bmi'] = (df['family_history_of_diabetes'] == 'Present').astype(int) * df['bmi']
-        logger.info("Engineered feature(s): %s", list(self.ENGINEERED_FEATURES))
-        return df

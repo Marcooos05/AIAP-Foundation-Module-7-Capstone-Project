@@ -24,8 +24,13 @@ def base_config():
             "diabetes_diagnosis": ["Negative", "Positive"],
         },
         "leakage_candidate_features": ["fasting_glucose_level"],
-        "lr_feature_swaps": {"physical_activity_frequency": "sqrt_physical_activity"},
-        "lr_extra_features": ["family_history_x_bmi"],
+        "lr_engineered_features": ["sqrt_physical_activity", "family_history_x_bmi"],
+        "candidate_features": [
+            "sqrt_physical_activity", "family_history_x_bmi", "bmi_squared", "bmi_band", "age_band",
+            "elevated_bp", "prediabetic_glucose",
+        ],
+        "selection_scoring": "average_precision",
+        "min_cv_gain": 0.005,
         "plausible_ranges": {
             "age": [18, 100],
             "bmi": [12, 70],

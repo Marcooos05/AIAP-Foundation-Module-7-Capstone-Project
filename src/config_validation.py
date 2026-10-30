@@ -2,6 +2,10 @@
 
 from typing import Any, Dict
 
+from sklearn.metrics import get_scorer_names
+
+from src.feature_engineering import FEATURE_SPECS
+
 REQUIRED_KEYS = {
     "file_path": str,
     "target_column": str,
@@ -14,16 +18,16 @@ REQUIRED_KEYS = {
     "binary_features": list,
     "categorical_levels": dict,
     "leakage_candidate_features": list,
-    "lr_feature_swaps": dict,
-    "lr_extra_features": list,
+    "lr_engineered_features": list,
+    "candidate_features": list,
+    "selection_scoring": str,
+    "min_cv_gain": (int, float),
     "plausible_ranges": dict,
 }
 
 FEATURE_ROLE_KEYS = ("numeric_features", "binary_features")
 
-# Features created by DataPreparation._engineer_features. Kept here (not imported
-# from src.data_preparation) so config validation has no dependency on it.
-ENGINEERED_FEATURES = ("sqrt_physical_activity", "family_history_x_bmi")
+ENGINEERED_FEATURES = tuple(FEATURE_SPECS)
 
 
 def validate_config(config: Dict[str, Any]) -> None:
@@ -56,10 +60,16 @@ def validate_config(config: Dict[str, Any]) -> None:
     if config["cv"] < 2:
         raise ValueError(f"Config key 'cv' must be >= 2, got {config['cv']}.")
 
+    if config["min_cv_gain"] < 0:
+        raise ValueError(f"Config key 'min_cv_gain' must be >= 0, got {config['min_cv_gain']}.")
+
+    if config["selection_scoring"] not in get_scorer_names():
+        raise ValueError(f"Config key 'selection_scoring' must be a scikit-learn scorer, got '{config['selection_scoring']}'.")
+
     if config["min_age"] < 0:
         raise ValueError(f"Config key 'min_age' must be >= 0, got {config['min_age']}.")
 
-    for key in (*FEATURE_ROLE_KEYS, "leakage_candidate_features", "lr_extra_features"):
+    for key in (*FEATURE_ROLE_KEYS, "leakage_candidate_features", "lr_engineered_features", "candidate_features"):
         if not all(isinstance(item, str) for item in config[key]):
             raise ValueError(f"Config key '{key}' must be a list of strings.")
 
@@ -79,19 +89,14 @@ def validate_config(config: Dict[str, Any]) -> None:
     if not_numeric:
         raise ValueError(f"Leakage candidate feature(s) {not_numeric} must be listed in 'numeric_features'.")
 
-    for raw, engineered in config["lr_feature_swaps"].items():
-        if raw not in numeric:
-            raise ValueError(f"lr_feature_swaps key '{raw}' must be listed in 'numeric_features'.")
-        if engineered not in ENGINEERED_FEATURES:
-            raise ValueError(
-                f"lr_feature_swaps value '{engineered}' must be an engineered feature: {list(ENGINEERED_FEATURES)}."
-            )
-
-    unknown_extra = sorted(set(config["lr_extra_features"]) - set(ENGINEERED_FEATURES))
-    if unknown_extra:
-        raise ValueError(
-            f"lr_extra_features {unknown_extra} must be engineered features: {list(ENGINEERED_FEATURES)}."
-        )
+    for key in ("lr_engineered_features", "candidate_features"):
+        unknown = sorted(set(config[key]) - set(ENGINEERED_FEATURES))
+        if unknown:
+            raise ValueError(f"{key} {unknown} must be engineered features: {list(ENGINEERED_FEATURES)}.")
+        for name in config[key]:
+            missing_sources = sorted(set(FEATURE_SPECS[name].sources) - set(numeric) - set(binary))
+            if missing_sources:
+                raise ValueError(f"{key} feature '{name}' needs feature(s) {missing_sources}, which are not configured.")
 
     levels = config["categorical_levels"]
     for column in (*binary, target):

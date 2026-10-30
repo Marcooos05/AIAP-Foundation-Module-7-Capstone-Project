@@ -1,0 +1,346 @@
+{
+  "retention_rule": "mean average_precision gain over baseline >= 0.005 in Logistic Regression, improved in more than half of 5 folds, and kept by L1, in every glucose setting",
+  "with_glucose": {
+    "feature_sets": {
+      "baseline": [],
+      "+sqrt_physical_activity": [
+        "sqrt_physical_activity"
+      ],
+      "+family_history_x_bmi": [
+        "family_history_x_bmi"
+      ],
+      "+bmi_squared": [
+        "bmi_squared"
+      ],
+      "+bmi_band": [
+        "bmi_band"
+      ],
+      "+age_band": [
+        "age_band"
+      ],
+      "+elevated_bp": [
+        "elevated_bp"
+      ],
+      "+prediabetic_glucose": [
+        "prediabetic_glucose"
+      ],
+      "all_candidates": [
+        "sqrt_physical_activity",
+        "family_history_x_bmi",
+        "bmi_squared",
+        "bmi_band",
+        "age_band",
+        "elevated_bp",
+        "prediabetic_glucose"
+      ],
+      "l1_selected": [
+        "sqrt_physical_activity",
+        "family_history_x_bmi",
+        "bmi_band",
+        "age_band",
+        "prediabetic_glucose"
+      ],
+      "config_lr": []
+    },
+    "logistic_regression": {
+      "baseline": {
+        "average_precision_mean": 0.6894,
+        "roc_auc_mean": 0.9202,
+        "recall_mean": 0.8634,
+        "average_precision_std": 0.0384,
+        "roc_auc_std": 0.0129,
+        "recall_std": 0.0751,
+        "gain_vs_baseline": 0.0,
+        "n_folds_improved": 0
+      },
+      "+sqrt_physical_activity": {
+        "average_precision_mean": 0.6896,
+        "roc_auc_mean": 0.9205,
+        "recall_mean": 0.8634,
+        "average_precision_std": 0.039,
+        "roc_auc_std": 0.0126,
+        "recall_std": 0.0751,
+        "gain_vs_baseline": 0.0002,
+        "n_folds_improved": 3
+      },
+      "+family_history_x_bmi": {
+        "average_precision_mean": 0.6883,
+        "roc_auc_mean": 0.9211,
+        "recall_mean": 0.8547,
+        "average_precision_std": 0.0417,
+        "roc_auc_std": 0.0134,
+        "recall_std": 0.0764,
+        "gain_vs_baseline": -0.0011,
+        "n_folds_improved": 2
+      },
+      "+bmi_squared": {
+        "average_precision_mean": 0.689,
+        "roc_auc_mean": 0.9207,
+        "recall_mean": 0.8551,
+        "average_precision_std": 0.0403,
+        "roc_auc_std": 0.0124,
+        "recall_std": 0.0802,
+        "gain_vs_baseline": -0.0004,
+        "n_folds_improved": 3
+      },
+      "+bmi_band": {
+        "average_precision_mean": 0.6898,
+        "roc_auc_mean": 0.9186,
+        "recall_mean": 0.8551,
+        "average_precision_std": 0.0438,
+        "roc_auc_std": 0.0135,
+        "recall_std": 0.0802,
+        "gain_vs_baseline": 0.0004,
+        "n_folds_improved": 2
+      },
+      "+age_band": {
+        "average_precision_mean": 0.6844,
+        "roc_auc_mean": 0.918,
+        "recall_mean": 0.8638,
+        "average_precision_std": 0.0359,
+        "roc_auc_std": 0.0109,
+        "recall_std": 0.07,
+        "gain_vs_baseline": -0.005,
+        "n_folds_improved": 1
+      },
+      "+elevated_bp": {
+        "average_precision_mean": 0.6863,
+        "roc_auc_mean": 0.9196,
+        "recall_mean": 0.8551,
+        "average_precision_std": 0.0402,
+        "roc_auc_std": 0.0144,
+        "recall_std": 0.0659,
+        "gain_vs_baseline": -0.0031,
+        "n_folds_improved": 4
+      },
+      "+prediabetic_glucose": {
+        "average_precision_mean": 0.6881,
+        "roc_auc_mean": 0.9197,
+        "recall_mean": 0.8634,
+        "average_precision_std": 0.035,
+        "roc_auc_std": 0.013,
+        "recall_std": 0.0751,
+        "gain_vs_baseline": -0.0013,
+        "n_folds_improved": 2
+      },
+      "all_candidates": {
+        "average_precision_mean": 0.6804,
+        "roc_auc_mean": 0.9161,
+        "recall_mean": 0.8467,
+        "average_precision_std": 0.0431,
+        "roc_auc_std": 0.0132,
+        "recall_std": 0.0456,
+        "gain_vs_baseline": -0.0091,
+        "n_folds_improved": 2
+      },
+      "l1_selected": {
+        "average_precision_mean": 0.6831,
+        "roc_auc_mean": 0.9159,
+        "recall_mean": 0.8467,
+        "average_precision_std": 0.0406,
+        "roc_auc_std": 0.0125,
+        "recall_std": 0.0599,
+        "gain_vs_baseline": -0.0063,
+        "n_folds_improved": 1
+      },
+      "config_lr": {
+        "average_precision_mean": 0.6894,
+        "roc_auc_mean": 0.9202,
+        "recall_mean": 0.8634,
+        "average_precision_std": 0.0384,
+        "roc_auc_std": 0.0129,
+        "recall_std": 0.0751,
+        "gain_vs_baseline": 0.0,
+        "n_folds_improved": 0
+      }
+    },
+    "random_forest": {
+      "baseline": {
+        "average_precision_mean": 0.6674,
+        "roc_auc_mean": 0.9112,
+        "recall_mean": 0.6431,
+        "average_precision_std": 0.047,
+        "roc_auc_std": 0.016,
+        "recall_std": 0.0825,
+        "gain_vs_baseline": 0.0,
+        "n_folds_improved": 0
+      },
+      "all_candidates": {
+        "average_precision_mean": 0.6634,
+        "roc_auc_mean": 0.9092,
+        "recall_mean": 0.6609,
+        "average_precision_std": 0.0466,
+        "roc_auc_std": 0.0133,
+        "recall_std": 0.0599,
+        "gain_vs_baseline": -0.004,
+        "n_folds_improved": 2
+      }
+    },
+    "retained": []
+  },
+  "without_glucose": {
+    "feature_sets": {
+      "baseline": [],
+      "+sqrt_physical_activity": [
+        "sqrt_physical_activity"
+      ],
+      "+family_history_x_bmi": [
+        "family_history_x_bmi"
+      ],
+      "+bmi_squared": [
+        "bmi_squared"
+      ],
+      "+bmi_band": [
+        "bmi_band"
+      ],
+      "+age_band": [
+        "age_band"
+      ],
+      "+elevated_bp": [
+        "elevated_bp"
+      ],
+      "all_candidates": [
+        "sqrt_physical_activity",
+        "family_history_x_bmi",
+        "bmi_squared",
+        "bmi_band",
+        "age_band",
+        "elevated_bp"
+      ],
+      "l1_selected": [
+        "sqrt_physical_activity",
+        "family_history_x_bmi",
+        "bmi_squared",
+        "bmi_band",
+        "elevated_bp"
+      ],
+      "config_lr": []
+    },
+    "logistic_regression": {
+      "baseline": {
+        "average_precision_mean": 0.5093,
+        "roc_auc_mean": 0.846,
+        "recall_mean": 0.7714,
+        "average_precision_std": 0.0373,
+        "roc_auc_std": 0.0228,
+        "recall_std": 0.108,
+        "gain_vs_baseline": 0.0,
+        "n_folds_improved": 0
+      },
+      "+sqrt_physical_activity": {
+        "average_precision_mean": 0.5125,
+        "roc_auc_mean": 0.8467,
+        "recall_mean": 0.7453,
+        "average_precision_std": 0.0371,
+        "roc_auc_std": 0.0222,
+        "recall_std": 0.1039,
+        "gain_vs_baseline": 0.0032,
+        "n_folds_improved": 5
+      },
+      "+family_history_x_bmi": {
+        "average_precision_mean": 0.5022,
+        "roc_auc_mean": 0.8449,
+        "recall_mean": 0.7971,
+        "average_precision_std": 0.0374,
+        "roc_auc_std": 0.0213,
+        "recall_std": 0.0883,
+        "gain_vs_baseline": -0.0071,
+        "n_folds_improved": 2
+      },
+      "+bmi_squared": {
+        "average_precision_mean": 0.5115,
+        "roc_auc_mean": 0.8462,
+        "recall_mean": 0.7797,
+        "average_precision_std": 0.0413,
+        "roc_auc_std": 0.0247,
+        "recall_std": 0.0975,
+        "gain_vs_baseline": 0.0022,
+        "n_folds_improved": 2
+      },
+      "+bmi_band": {
+        "average_precision_mean": 0.4987,
+        "roc_auc_mean": 0.8458,
+        "recall_mean": 0.7536,
+        "average_precision_std": 0.0405,
+        "roc_auc_std": 0.0232,
+        "recall_std": 0.0952,
+        "gain_vs_baseline": -0.0106,
+        "n_folds_improved": 1
+      },
+      "+age_band": {
+        "average_precision_mean": 0.5086,
+        "roc_auc_mean": 0.8461,
+        "recall_mean": 0.7714,
+        "average_precision_std": 0.0399,
+        "roc_auc_std": 0.0236,
+        "recall_std": 0.108,
+        "gain_vs_baseline": -0.0007,
+        "n_folds_improved": 2
+      },
+      "+elevated_bp": {
+        "average_precision_mean": 0.5022,
+        "roc_auc_mean": 0.8432,
+        "recall_mean": 0.7464,
+        "average_precision_std": 0.0478,
+        "roc_auc_std": 0.0249,
+        "recall_std": 0.1052,
+        "gain_vs_baseline": -0.0071,
+        "n_folds_improved": 4
+      },
+      "all_candidates": {
+        "average_precision_mean": 0.4967,
+        "roc_auc_mean": 0.8425,
+        "recall_mean": 0.7623,
+        "average_precision_std": 0.0354,
+        "roc_auc_std": 0.022,
+        "recall_std": 0.0958,
+        "gain_vs_baseline": -0.0126,
+        "n_folds_improved": 1
+      },
+      "l1_selected": {
+        "average_precision_mean": 0.5007,
+        "roc_auc_mean": 0.8429,
+        "recall_mean": 0.754,
+        "average_precision_std": 0.0378,
+        "roc_auc_std": 0.0231,
+        "recall_std": 0.1017,
+        "gain_vs_baseline": -0.0086,
+        "n_folds_improved": 2
+      },
+      "config_lr": {
+        "average_precision_mean": 0.5093,
+        "roc_auc_mean": 0.846,
+        "recall_mean": 0.7714,
+        "average_precision_std": 0.0373,
+        "roc_auc_std": 0.0228,
+        "recall_std": 0.108,
+        "gain_vs_baseline": 0.0,
+        "n_folds_improved": 0
+      }
+    },
+    "random_forest": {
+      "baseline": {
+        "average_precision_mean": 0.4585,
+        "roc_auc_mean": 0.8176,
+        "recall_mean": 0.5337,
+        "average_precision_std": 0.0601,
+        "roc_auc_std": 0.0313,
+        "recall_std": 0.0542,
+        "gain_vs_baseline": 0.0,
+        "n_folds_improved": 0
+      },
+      "all_candidates": {
+        "average_precision_mean": 0.4506,
+        "roc_auc_mean": 0.8169,
+        "recall_mean": 0.542,
+        "average_precision_std": 0.0479,
+        "roc_auc_std": 0.019,
+        "recall_std": 0.0442,
+        "gain_vs_baseline": -0.0078,
+        "n_folds_improved": 2
+      }
+    },
+    "retained": []
+  },
+  "recommended_features": []
+}

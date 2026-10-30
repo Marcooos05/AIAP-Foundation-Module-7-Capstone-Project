@@ -4,7 +4,7 @@
 
 ## Dataset Overview
 
-**File:** `data/synthetic_data_166.csv`, with 1,000 rows (one per individual) × 8 columns (7 features + 1 target). The filename indicates the data is **synthetic**, and its near-perfectly normal distributions support this (see [EDA.ipynb](EDA.ipynb)).
+**File:** `data/synthetic_data_166.csv`, with 1,000 rows (one per individual) × 8 columns (7 features + 1 target). The filename indicates the data is **synthetic**, and its near-perfectly normal distributions support this (see [eda.ipynb](eda.ipynb)).
 
 ### Features
 
@@ -48,7 +48,7 @@ Units are not documented. The ones below are inferred from the value ranges and 
 
 ### Bivariate & correlation findings
 
-Full analysis: [EDA.ipynb](EDA.ipynb), Part 2 (§8–14).
+Full analysis: [eda.ipynb](eda.ipynb), Part 3 (§8–14).
 
 | Rank | Feature | AUC alone | Corr. with Positive | Effect size | Matches clinical? |
 |---|---|---|---|---|---|
@@ -71,20 +71,20 @@ Full analysis: [EDA.ipynb](EDA.ipynb), Part 2 (§8–14).
 
 ### Data preparation
 
-Explored and justified in [EDA.ipynb](EDA.ipynb), Part 3 (§15–21), to be ported into the `src/` pipeline.
+Explored and justified in [eda.ipynb](eda.ipynb), Part 4 (§15–21), and implemented in `src/` (see [Pipeline](#pipeline-python-mainpy)).
 
 | Step | Decision | Leakage safety |
 |---|---|---|
 | **Cleaning** | Drop the 3 rows with age < 18 (2 Positive, 1 Negative), giving **997 rows, 148 Positive (14.8%)**. Keep ages > 100, BMI 11.8 and all statistical outliers (35% of outlier rows are Positive) | Fixed rule, applied before the split |
-| **Feature engineering** | `sqrt_physical_activity` (skew 0.57 → −0.06) and `family_history_x_bmi`, for Logistic Regression only. Kept only if CV shows a gain: on the training set the interaction is weak alone (AUC 0.59). Clinical bins are for interpretability only | Row-wise, applied before the split |
+| **Feature engineering** | 7 candidates in [src/feature_engineering.py](src/feature_engineering.py): `sqrt_physical_activity` (skew 0.57 → −0.06), `family_history_x_bmi`, `bmi_squared`, `bmi_band`, `age_band`, `elevated_bp`, `prediabetic_glucose`. Each is kept only if CV on the training set shows a gain; **none did**, so the models use the raw features (see [Feature selection & validation](#feature-selection--validation)) | Row-wise with fixed clinical cut-offs, run inside the pipeline on each CV fold |
 | **Splitting** | Stratified 80/20 train/test (`random_state=42`): train 797 (118 Positive), test 200 (30 Positive). No separate validation set; stratified 5-fold CV on train (23–24 positives per fold). The test set is used once | |
 | **Encoding** | `family_history_of_diabetes` → `OneHotEncoder(drop="if_binary")` (one 0/1 column). Target: Positive = 1 | Inside the pipeline |
 | **Scaling** | `StandardScaler` on numeric features, since they are near-normal with few outliers (so `RobustScaler` isn't needed) | Fitted on each training fold only, inside the pipeline |
-| **Feature sets** | `with_glucose` (7 features for trees, 8 for LR) and `without_glucose` (6 / 7) | |
+| **Feature sets** | `with_glucose` (7 features) and `without_glucose` (6) | |
 
 ## Literature Review
 
-> **Status:** first draft, written after the literature review and updated after the univariate and bivariate EDA ([EDA.ipynb](EDA.ipynb)). The open question is the label definition (see Dataset Overview).
+> **Status:** first draft, written after the literature review and updated after the univariate and bivariate EDA ([eda.ipynb](eda.ipynb)). The open question is the label definition (see Dataset Overview).
 
 ### 1. Problem statement and rationale
 
@@ -187,7 +187,7 @@ We follow the **TRIPOD+AI** checklist (#10): data source, outcome definition, pr
   - **Verdict: glucose is not classified as leakage. Keep it,** but still train every model with and without it, to report how well the non-laboratory features alone perform (more relevant for early screening).
   - The verdict will be revisited if the data provider's label definition shows that glucose was used to construct the label.
 
-#### 5.8 Feature engineering *(updated after bivariate EDA)*
+#### 5.8 Feature engineering *(updated after bivariate EDA and CV validation)*
 
 Kept to a small number given the sample size (#8):
 
@@ -195,9 +195,10 @@ Kept to a small number given the sample size (#8):
 |---|---|---|
 | Raw continuous features | **Keep** | Monotonic, near-linear relationships (Pearson ≈ Spearman); low VIF |
 | Binary encoding of `family_history_of_diabetes` (Present = 1) | **Keep** | Strong, clinically consistent (OR 3.54) |
-| Square-root transform of `physical_activity_frequency` | **Try** (LR only) | Right-skewed (skew 0.57); trees are unaffected |
-| `family_history × bmi` interaction | **Try** (LR only) | The family-history effect varies across BMI bands, but cells are small |
-| BMI category (WHO), BP category, age bands, glucose band | **Interpretability only** | Relationships are monotonic without thresholds, so there is little predictive gain over raw values |
+| Square-root transform of `physical_activity_frequency` | **Tried, not kept** | Right-skewed (skew 0.57); trees are unaffected. CV gain too small (+0.003 PR-AUC without glucose) |
+| `family_history × bmi` interaction | **Tried, not kept** | The family-history effect varies across BMI bands, but cells are small. CV PR-AUC fell |
+| `bmi_squared` (non-linear BMI) | **Tried, not kept** | Positive rate drops steeply from underweight to normal BMI. No consistent CV gain |
+| BMI category (WHO), age bands (ADA), BP ≥ 130 flag, glucose ≥ 100 flag | **Tried, not kept** | Relationships are monotonic without thresholds; CV confirmed bands/flags lose information vs raw values |
 | Clinical risk-factor count (FINDRISC-style) | **Drop** | Perfectly inverted on this data (50% → 0% Positive), so it would mislead |
 
 ### 6. Pitfalls identified in the literature
@@ -233,16 +234,20 @@ AIAP_Mod7_Capstone-Project/
 ├── data/
 │   └── synthetic_data_166.csv      # raw dataset (not committed, see .gitignore)
 ├── src/
-│   ├── config.yaml                 # all pipeline settings (paths, split, features, levels)
+│   ├── feature_engineering.py      # ClinicalFeatureEngineer (sklearn transformer), feature selection
+│   │                               #   (L1, permutation importance) and CV feature-set comparison
+│   ├── data_preparation.py         # DataPreparation: validation report, cleaning, stratified split,
+│   │                               #   feature pipeline per variant (engineering + scaling + encoding)
 │   ├── config_validation.py        # validates config.yaml before the pipeline runs
-│   └── data_preparation.py         # DataPreparation: validation report, cleaning, feature engineering,
-│                                   #   stratified split, preprocessor (scaling + encoding)
-├── tests/                          # pytest suite (config validation, data preparation)
-├── reports/
+│   └── config.yaml                 # all pipeline settings (paths, split, features, selection rule)
+├── tests/                          # pytest suite (config, data preparation, feature engineering)
+├── reports/                        # written by main.py
 │   ├── figures/                    # EDA plots
-│   ├── data_validation_report.json # written by main.py
-│   └── data_preparation_summary.json
-├── EDA.ipynb                       # exploratory analysis and data preparation rationale
+│   ├── data_validation_report.json
+│   ├── data_preparation_summary.json
+│   ├── feature_selection.json      # L1 coefficients and permutation importance rankings
+│   └── feature_comparison.json     # CV scores per feature set and the recommended features
+├── eda.ipynb                       # exploratory analysis and data preparation rationale
 ├── main.py                         # pipeline entry point
 ├── requirements.txt / requirements-dev.txt
 └── pytest.ini
@@ -282,27 +287,61 @@ Run the tests with `pip install -r requirements-dev.txt` and then `python -m pyt
 
 Run from the project root. All settings live in [src/config.yaml](src/config.yaml), which is validated before anything runs.
 
-**Stage 1: data preparation** (implemented)
+**Stage 1: data preparation and feature engineering** (implemented, ~45 s)
 
 | Step | What happens | Output |
 |---|---|---|
 | 1. Load config | Read and validate `src/config.yaml` | |
 | 2. Load data | Read the CSV and check the required columns | |
 | 3. Validation report | Count missing values, duplicates, unexpected category levels, values outside plausible ranges, rows below `min_age`, and the target distribution, on the raw data | `reports/data_validation_report.json` |
-| 4. Clean & engineer | Drop duplicates and missing targets, strip and check category levels, drop rows with age < 18, add `sqrt_physical_activity` and `family_history_x_bmi` | 1000 → 997 rows |
+| 4. Clean | Drop duplicates and missing targets, strip and check category levels, drop rows with age < 18 | 1000 → 997 rows |
 | 5. Split | Stratified 80/20 train/test (`random_state=42`) | train 797 (14.8% Positive), test 200 (15.0%) |
-| 6. Preprocessor check | Fit `StandardScaler` + `OneHotEncoder(drop="if_binary")` on train for each feature variant, transform both sets, check for NaNs | `reports/data_preparation_summary.json` |
+| 6. Feature pipeline check | For each feature variant, fit `ClinicalFeatureEngineer` → `StandardScaler` + `OneHotEncoder(drop="if_binary")` on train, transform both sets, check for NaNs | `reports/data_preparation_summary.json` |
+| 7. Feature selection | L1 Logistic Regression and permutation importance (LR, Random Forest), on the training set only | `reports/feature_selection.json` |
+| 8. Feature set comparison | 5-fold CV of the raw-feature baseline against engineered feature sets; recommend which to keep | `reports/feature_comparison.json` |
 
 **Feature variants** (`DataPreparation.feature_variants()`):
 
 | Variant | Features |
 |---|---|
 | `with_glucose__trees` | 6 raw numeric + family history (7) |
-| `with_glucose__logistic_regression` | activity → sqrt, + family history × BMI (8) |
+| `with_glucose__logistic_regression` | raw features + `lr_engineered_features` from config; currently none, so the same 7 |
 | `without_glucose__trees` | the same as trees, minus `fasting_glucose_level` (6) |
-| `without_glucose__logistic_regression` | the same as LR, minus `fasting_glucose_level` (7) |
+| `without_glucose__logistic_regression` | the same as LR, minus `fasting_glucose_level` and any glucose-derived feature (6) |
 
-The preprocessor is always fitted on training data only. In the modelling stage it sits inside a scikit-learn `Pipeline`, so cross-validation refits it on every fold.
+`DataPreparation.create_feature_pipeline()` returns an unfitted `Pipeline([("engineer", ClinicalFeatureEngineer(...)), ("preprocess", ColumnTransformer(...))])`. Append a model and cross-validation refits every step on each training fold, so engineering, scaling and encoding never see validation or test rows.
+
+### Feature selection & validation
+
+All of this runs on the **training set only** (797 rows, 118 Positive); the test set is untouched. The primary metric is **PR-AUC** (`average_precision`), because only 15% of rows are Positive (§5.3). Every feature set uses the same stratified 5-fold split, so per-fold gains are paired.
+
+**Component.** [src/feature_engineering.py](src/feature_engineering.py) holds a registry (`FEATURE_SPECS`) of row-wise features. Each one records its source columns, builder and rationale, and uses fixed clinical cut-offs, so nothing is learned from the data. `ClinicalFeatureEngineer` is a scikit-learn transformer (`fit` / `transform` / `get_feature_names_out`, cloneable), so it can be reused in any pipeline. Features derived from glucose (`prediabetic_glucose`) are dropped automatically from the `without_glucose` variant.
+
+**Retention rule** (fixed in `config.yaml` *before* looking at results): a candidate is kept if, added on its own to the Logistic Regression baseline, it raises mean CV PR-AUC by ≥ 0.005, improves it in at least 3 of 5 folds, **and** L1 keeps a non-zero coefficient, in every glucose setting where it applies.
+
+**Logistic Regression, 5-fold CV** (mean PR-AUC; gain over baseline; folds improved):
+
+| Feature set | With glucose | Without glucose |
+|---|---|---|
+| baseline (raw features) | 0.689 | 0.509 |
+| + `sqrt_physical_activity` | +0.000 (3/5) | +0.003 (5/5) |
+| + `family_history_x_bmi` | −0.001 (2/5) | −0.007 (2/5) |
+| + `bmi_squared` | −0.000 (3/5) | +0.002 (2/5) |
+| + `bmi_band` | +0.000 (2/5) | −0.011 (1/5) |
+| + `age_band` | −0.005 (1/5) | −0.001 (2/5) |
+| + `elevated_bp` | −0.003 (4/5) | −0.007 (4/5) |
+| + `prediabetic_glucose` | −0.001 (2/5) | n/a |
+| all candidates | −0.009 (2/5) | −0.013 (1/5) |
+| L1-selected candidates | −0.006 (1/5) | −0.009 (2/5) |
+
+Fold-to-fold standard deviation is about 0.04, so every difference above is within noise. A Random Forest with all candidates also scores below its raw-feature baseline (−0.004 with glucose, −0.008 without), as expected: trees find thresholds and interactions on their own.
+
+**Feature rankings** (`reports/feature_selection.json`):
+- **L1** (C chosen by CV) keeps glucose, age, BMI-related terms and activity in both settings. With glucose it zeroes blood pressure, cholesterol, `bmi_squared` and `elevated_bp`. In both settings it drops the raw family-history flag in favour of `family_history_x_bmi`.
+- **Permutation importance** on held-out folds ranks `fasting_glucose_level` first by far (PR-AUC drop 0.36). Without glucose, BMI, activity, family history and age lead. Among the raw features, cholesterol and blood pressure contribute least.
+- The engineered BMI terms rank high only because they *substitute* for raw BMI (they are highly correlated with it). They do not add new information, which is why the CV comparison, not the ranking, decides what to keep.
+
+**Decision.** No candidate met the rule, so `lr_engineered_features` is empty and both model families use the 7 (or 6) raw features. This matches the EDA: the relationships are monotonic and near-linear (§11, §14), so bands and flags discard information, and the interaction is weak (AUC 0.59, §17.2); the full reasoning is in eda.ipynb §17. `sqrt_physical_activity` is the most consistent candidate (5/5 folds without glucose), but its gain is too small to justify the extra feature. All candidates stay in the registry, so they can be re-tested with the final models by editing `config.yaml`. `main.py` warns if the config disagrees with the CV recommendation.
 
 **Stage 2: model training & evaluation** (next): Logistic Regression baseline → Decision Tree → Random Forest → Gradient Boosting, with stratified 5-fold CV, `class_weight="balanced"` and threshold tuning for recall (see §5 of the literature review).
 
